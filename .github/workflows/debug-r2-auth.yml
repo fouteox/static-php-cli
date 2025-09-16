@@ -1,0 +1,194 @@
+name: "Debug R2 Authentication"
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/debug-r2-auth.yml'
+
+jobs:
+  test-r2-auth-methods:
+    name: "Test R2 Authentication Methods"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v5
+
+      - name: "Create test file"
+        run: |
+          echo "Debug test file created at $(date)" > debug-test.txt
+          echo "Content: R2 authentication debug" >> debug-test.txt
+
+      # Test 1: CLI direct avec variables d'environnement (pas d'action GitHub)
+      - name: "Test 1: Direct AWS CLI with env vars"
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: us-east-1
+        run: |
+          echo "=== Test 1: Direct AWS CLI ==="
+          echo "AWS CLI version:"
+          aws --version
+
+          echo "Testing R2 connection with direct env vars..."
+          if aws s3 ls s3://${{ secrets.R2_BUCKET_NAME }}/ \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }} \
+            --region us-east-1; then
+            echo "✅ Direct CLI works!"
+
+            # Test upload
+            aws s3 cp debug-test.txt \
+              s3://${{ secrets.R2_BUCKET_NAME }}/debug/test1-direct-cli.txt \
+              --endpoint-url ${{ secrets.R2_ENDPOINT }} \
+              --region us-east-1
+            echo "✅ Direct CLI upload successful!"
+          else
+            echo "❌ Direct CLI failed"
+          fi
+
+      # Test 2: Avec configure-aws-credentials v5
+      - name: "Test 2: Configure AWS credentials v5"
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          aws-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: "Test 2: Upload with v5 action"
+        run: |
+          echo "=== Test 2: AWS Action v5 ==="
+          echo "Environment after v5 action:"
+          echo "AWS_REGION: $AWS_REGION"
+          echo "AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION"
+
+          echo "Testing R2 connection with v5 action..."
+          if aws s3 ls s3://${{ secrets.R2_BUCKET_NAME }}/ \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }}; then
+            echo "✅ v5 action works!"
+
+            # Test upload
+            aws s3 cp debug-test.txt \
+              s3://${{ secrets.R2_BUCKET_NAME }}/debug/test2-v5-action.txt \
+              --endpoint-url ${{ secrets.R2_ENDPOINT }}
+            echo "✅ v5 action upload successful!"
+          else
+            echo "❌ v5 action failed"
+          fi
+
+      # Test 3: Reset et test avec v4
+      - name: "Test 3: Reset environment"
+        run: |
+          echo "=== Resetting environment ==="
+          unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+          unset AWS_REGION AWS_DEFAULT_REGION
+
+      - name: "Test 3: Configure AWS credentials v4"
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: "Test 3: Upload with v4 action"
+        run: |
+          echo "=== Test 3: AWS Action v4 ==="
+          echo "Environment after v4 action:"
+          echo "AWS_REGION: $AWS_REGION"
+          echo "AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION"
+
+          echo "Testing R2 connection with v4 action..."
+          if aws s3 ls s3://${{ secrets.R2_BUCKET_NAME }}/ \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }}; then
+            echo "✅ v4 action works!"
+
+            # Test upload
+            aws s3 cp debug-test.txt \
+              s3://${{ secrets.R2_BUCKET_NAME }}/debug/test3-v4-action.txt \
+              --endpoint-url ${{ secrets.R2_ENDPOINT }}
+            echo "✅ v4 action upload successful!"
+          else
+            echo "❌ v4 action failed"
+          fi
+
+      # Test 4: Test avec skip-session-tagging
+      - name: "Test 4: Configure AWS credentials v5 with skip session tagging"
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          aws-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+          role-skip-session-tagging: true
+
+      - name: "Test 4: Upload with skip session tagging"
+        run: |
+          echo "=== Test 4: v5 with skip session tagging ==="
+          echo "Testing R2 connection with skip session tagging..."
+          if aws s3 ls s3://${{ secrets.R2_BUCKET_NAME }}/ \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }}; then
+            echo "✅ Skip session tagging works!"
+
+            # Test upload
+            aws s3 cp debug-test.txt \
+              s3://${{ secrets.R2_BUCKET_NAME }}/debug/test4-skip-tagging.txt \
+              --endpoint-url ${{ secrets.R2_ENDPOINT }}
+            echo "✅ Skip session tagging upload successful!"
+          else
+            echo "❌ Skip session tagging failed"
+          fi
+
+      # Test 5: Debug complet
+      - name: "Test 5: Complete debug information"
+        run: |
+          echo "=== Debug Information ==="
+          echo "Secrets configuration (masked):"
+          echo "R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID != '' && '✅ Set' || '❌ Not set' }}"
+          echo "R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY != '' && '✅ Set' || '❌ Not set' }}"
+          echo "R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}"
+          echo "R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}"
+
+          echo ""
+          echo "Current AWS CLI config:"
+          aws configure list || echo "No AWS config found"
+
+          echo ""
+          echo "AWS CLI version:"
+          aws --version
+
+          echo ""
+          echo "Environment variables:"
+          env | grep -E '^AWS_' | sort || echo "No AWS environment variables"
+
+      # Test 6: List des fichiers uploadés
+      - name: "Test 6: List uploaded debug files"
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: us-east-1
+        run: |
+          echo "=== Debug Files Uploaded ==="
+          echo "Listing debug folder contents:"
+          aws s3 ls s3://${{ secrets.R2_BUCKET_NAME }}/debug/ \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }} \
+            --region us-east-1 || echo "No debug files found or listing failed"
+
+      # Cleanup (optionnel)
+      - name: "Cleanup debug files"
+        if: success()
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: us-east-1
+        run: |
+          echo "=== Cleanup ==="
+          echo "Removing debug files..."
+          aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/debug/test1-direct-cli.txt \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }} --region us-east-1 || true
+          aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/debug/test2-v5-action.txt \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }} --region us-east-1 || true
+          aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/debug/test3-v4-action.txt \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }} --region us-east-1 || true
+          aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/debug/test4-skip-tagging.txt \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }} --region us-east-1 || true
+          echo "Cleanup completed"
