@@ -15,16 +15,11 @@ on:
           - 'linux-aarch64-glibc'
           - 'macos-x86_64'
           - 'macos-aarch64'
-      php-version:
+      php-versions:
         required: true
-        description: PHP version to compile
+        description: PHP versions to compile (comma separated)
         default: '8.4'
-        type: choice
-        options:
-          - '8.4'
-          - '8.3'
-          - '8.2'
-          - '8.1'
+        type: string
       extensions:
         description: Extensions to build (comma separated)
         default: "bcmath,bz2,calendar,ctype,curl,dba,dom,exif,ffi,fileinfo,filter,ftp,gd,gmp,iconv,igbinary,imagick,imap,intl,ldap,lz4,mbstring,mongodb,mysqli,mysqlnd,opcache,openssl,pcntl,pdo,pdo_mysql,pdo_pgsql,pdo_sqlite,pdo_sqlsrv,pgsql,phar,posix,readline,redis,session,shmop,simplexml,soap,sockets,sodium,sqlite3,sqlsrv,sysvmsg,sysvsem,sysvshm,tokenizer,xml,xmlreader,xmlwriter,xsl,zip,zlib"
@@ -62,9 +57,9 @@ on:
         description: Build target OS
         default: 'macos-aarch64'
         type: string
-      php-version:
+      php-versions:
         required: true
-        description: PHP version to compile
+        description: PHP versions to compile (comma separated)
         default: '8.4'
         type: string
       extensions:
@@ -108,6 +103,7 @@ jobs:
       run: ${{ steps.gendef.outputs.run }}
       download: ${{ steps.gendef.outputs.download }}
       build: ${{ steps.gendef.outputs.build }}
+      php-versions: ${{ steps.gendef.outputs.php-versions }}
     steps:
       - name: "Checkout"
         uses: actions/checkout@v4
@@ -147,7 +143,6 @@ jobs:
               RUNS_ON="macos-latest"
               ;;
           esac
-          DOWN_CMD="$DOWN_CMD --with-php=${{ inputs.php-version }} --for-extensions=${{ inputs.extensions }} --ignore-cache-sources=php-src"
           BUILD_CMD="$BUILD_CMD ${{ inputs.extensions }}"
           if [ -n "${{ inputs.extra-libs }}" ]; then
             DOWN_CMD="$DOWN_CMD --for-libs=${{ inputs.extra-libs }}"
@@ -172,11 +167,19 @@ jobs:
           echo 'download='"$DOWN_CMD" >> "$GITHUB_OUTPUT"
           echo 'build='"$BUILD_CMD" >> "$GITHUB_OUTPUT"
           echo 'run='"$RUNS_ON" >> "$GITHUB_OUTPUT"
+
+          # Convert comma-separated PHP versions to JSON array
+          PHP_VERSIONS=$(echo '${{ inputs.php-versions }}' | sed 's/,/","/g' | sed 's/^/["/' | sed 's/$/"]/')
+          echo "php-versions=$PHP_VERSIONS" >> "$GITHUB_OUTPUT"
   build:
-    name: "Build ${{ inputs.version }} on ${{ inputs.os }}"
+    name: "Build PHP ${{ matrix.php-version }} on ${{ inputs.os }}"
     runs-on: ${{ needs.define-build.outputs.run }}
     needs: define-build
     timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ${{ fromJSON(needs.define-build.outputs.php-versions) }}
     steps:
       - name: "Checkout"
         uses: actions/checkout@v4
@@ -196,11 +199,39 @@ jobs:
         uses: actions/cache@v4
         with:
           path: downloads
-          key: php-dependencies-${{ inputs.os }}
+          key: php-dependencies-${{ matrix.php-version }}-${{ inputs.os }}
       - name: "Download sources"
-        run: ${{ needs.define-build.outputs.download }}
+        run: |
+          DOWNLOAD_CMD="${{ needs.define-build.outputs.download }} --with-php=${{ matrix.php-version }} --for-extensions=${{ inputs.extensions }} --ignore-cache-sources=php-src"
+          if [ -n "${{ inputs.extra-libs }}" ]; then
+            DOWNLOAD_CMD="$DOWNLOAD_CMD --for-libs=${{ inputs.extra-libs }}"
+          fi
+          if [ ${{ inputs.debug }} == true ]; then
+            DOWNLOAD_CMD="$DOWNLOAD_CMD --debug"
+          fi
+          if [ ${{ inputs.prefer-pre-built }} == true ]; then
+            DOWNLOAD_CMD="$DOWNLOAD_CMD --prefer-pre-built"
+          fi
+          eval "$DOWNLOAD_CMD"
       - name: "Build PHP"
-        run: ${{ needs.define-build.outputs.build }}
+        run: |
+          BUILD_CMD="${{ needs.define-build.outputs.build }} ${{ inputs.extensions }}"
+          if [ -n "${{ inputs.extra-libs }}" ]; then
+            BUILD_CMD="$BUILD_CMD --with-libs=${{ inputs.extra-libs }}"
+          fi
+          if [ ${{ inputs.debug }} == true ]; then
+            BUILD_CMD="$BUILD_CMD --debug"
+          fi
+          if [ ${{ inputs.build-cli }} == true ]; then
+            BUILD_CMD="$BUILD_CMD --build-cli"
+          fi
+          if [ ${{ inputs.build-micro }} == true ]; then
+            BUILD_CMD="$BUILD_CMD --build-micro"
+          fi
+          if [ ${{ inputs.build-fpm }} == true ]; then
+            BUILD_CMD="$BUILD_CMD --build-fpm"
+          fi
+          eval "$BUILD_CMD"
 #      - name: Setup tmate session
 #        if: ${{ failure() }}
 #        uses: mxschmitt/action-tmate@v3
@@ -210,7 +241,7 @@ jobs:
         name: "Upload PHP cli SAPI"
         uses: actions/upload-artifact@v4
         with:
-          name: php-cli-${{ inputs.php-version }}-${{ inputs.os }}
+          name: php-cli-${{ matrix.php-version }}-${{ inputs.os }}
           path: buildroot/bin/php
 
       # Upload micro self-extracted executable
@@ -218,7 +249,7 @@ jobs:
         name: "Upload PHP micro SAPI"
         uses: actions/upload-artifact@v4
         with:
-          name: php-micro-${{ inputs.php-version }}-${{ inputs.os }}
+          name: php-micro-${{ matrix.php-version }}-${{ inputs.os }}
           path: buildroot/bin/micro.sfx
 
       # Upload fpm executable
@@ -226,19 +257,19 @@ jobs:
         name: "Upload PHP fpm SAPI"
         uses: actions/upload-artifact@v4
         with:
-          name: php-fpm-${{ inputs.php-version }}-${{ inputs.os }}
+          name: php-fpm-${{ matrix.php-version }}-${{ inputs.os }}
           path: buildroot/bin/php-fpm
 
       # Upload extensions metadata
       - uses: actions/upload-artifact@v4
         name: "Upload License Files"
         with:
-          name: license-files-${{ inputs.php-version }}-${{ inputs.os }}
+          name: license-files-${{ matrix.php-version }}-${{ inputs.os }}
           path: buildroot/license/
       - uses: actions/upload-artifact@v4
         name: "Upload Build Metadata"
         with:
-          name: build-meta-${{ inputs.php-version }}-${{ inputs.os }}
+          name: build-meta-${{ matrix.php-version }}-${{ inputs.os }}
           path: |
             buildroot/build-extensions.json
             buildroot/build-libraries.json
