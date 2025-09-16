@@ -175,6 +175,10 @@ jobs:
     runs-on: ${{ needs.define-build.outputs.run }}
     needs: define-build
     timeout-minutes: 240
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
     strategy:
       fail-fast: false
       matrix:
@@ -231,14 +235,6 @@ jobs:
             BUILD_CMD="$BUILD_CMD --build-fpm"
           fi
           eval "$BUILD_CMD"
-
-      # Configure AWS credentials for R2
-      - name: "Configure AWS credentials for R2"
-        uses: aws-actions/configure-aws-credentials@v5
-        with:
-          aws-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
 #      - name: Setup tmate session
 #        if: ${{ failure() }}
 #        uses: mxschmitt/action-tmate@v3
