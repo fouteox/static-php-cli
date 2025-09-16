@@ -168,7 +168,6 @@ jobs:
           echo 'build='"$BUILD_CMD" >> "$GITHUB_OUTPUT"
           echo 'run='"$RUNS_ON" >> "$GITHUB_OUTPUT"
 
-          # Convert comma-separated PHP versions to JSON array
           PHP_VERSIONS=$(echo '${{ inputs.php-versions }}' | sed 's/,/","/g' | sed 's/^/["/' | sed 's/$/"]/')
           echo "php-versions=$PHP_VERSIONS" >> "$GITHUB_OUTPUT"
   build:
@@ -215,7 +214,7 @@ jobs:
           eval "$DOWNLOAD_CMD"
       - name: "Build PHP"
         run: |
-          BUILD_CMD="${{ needs.define-build.outputs.build }} ${{ inputs.extensions }}"
+          BUILD_CMD="${{ needs.define-build.outputs.build }}"
           if [ -n "${{ inputs.extra-libs }}" ]; then
             BUILD_CMD="$BUILD_CMD --with-libs=${{ inputs.extra-libs }}"
           fi
