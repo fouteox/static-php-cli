@@ -18,7 +18,7 @@ on:
       php-versions:
         required: true
         description: PHP versions to compile (comma separated)
-        default: '8.4'
+        default: '8.4,8.3,8.2'
         type: string
       extensions:
         description: Extensions to build (comma separated)
