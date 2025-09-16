@@ -6,7 +6,7 @@ on:
       os:
         required: true
         description: Build target OS
-        default: 'linux-x86_64'
+        default: 'macos-aarch64'
         type: choice
         options:
           - 'linux-x86_64'
@@ -42,6 +42,7 @@ on:
         type: boolean
       build-fpm:
         description: Build fpm binary
+        default: true
         type: boolean
       prefer-pre-built:
         description: Prefer pre-built binaries (reduce build time)
@@ -59,7 +60,7 @@ on:
       os:
         required: true
         description: Build target OS
-        default: 'linux-x86_64'
+        default: 'macos-aarch64'
         type: string
       php-version:
         required: true
@@ -82,6 +83,7 @@ on:
         type: boolean
       build-fpm:
         description: Build fpm binary
+        default: true
         type: boolean
       prefer-pre-built:
         description: Prefer pre-built binaries (reduce build time)
