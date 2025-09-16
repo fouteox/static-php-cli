@@ -11,6 +11,10 @@ jobs:
   test-r2:
     name: "Test R2 Upload"
     runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
     steps:
       - name: "Checkout"
         uses: actions/checkout@v5
@@ -32,13 +36,6 @@ jobs:
           # Mock metadata files
           echo '{"extensions": ["curl", "openssl", "mbstring"]}' > test-buildroot/metadata/build-extensions.json
           echo '{"libraries": ["zlib", "openssl"]}' > test-buildroot/metadata/build-libraries.json
-
-      - name: "Configure AWS credentials for R2"
-        uses: aws-actions/configure-aws-credentials@v5
-        with:
-          aws-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
 
       - name: "Test CLI upload"
         run: |
