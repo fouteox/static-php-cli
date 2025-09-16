@@ -1,0 +1,119 @@
+name: "Test R2 Upload"
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/test-r2-upload.yml'
+
+jobs:
+  test-r2:
+    name: "Test R2 Upload"
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v5
+
+      - name: "Create test files"
+        run: |
+          # Create test files mimicking the PHP build outputs
+          mkdir -p test-buildroot/{bin,license,metadata}
+
+          # Mock PHP binaries
+          echo "This is a mock PHP CLI binary for testing" > test-buildroot/bin/php
+          echo "This is a mock PHP FPM binary for testing" > test-buildroot/bin/php-fpm
+          echo "This is a mock PHP micro binary for testing" > test-buildroot/bin/micro.sfx
+
+          # Mock license files
+          echo "MIT License test" > test-buildroot/license/LICENSE
+          echo "Another license" > test-buildroot/license/ANOTHER_LICENSE
+
+          # Mock metadata files
+          echo '{"extensions": ["curl", "openssl", "mbstring"]}' > test-buildroot/metadata/build-extensions.json
+          echo '{"libraries": ["zlib", "openssl"]}' > test-buildroot/metadata/build-libraries.json
+
+      - name: "Configure AWS credentials for R2"
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          aws-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          aws-region: auto
+
+      - name: "Test CLI upload"
+        run: |
+          echo "Testing CLI upload..."
+          aws s3 cp test-buildroot/bin/php \
+            s3://${{ secrets.R2_BUCKET_NAME }}/cli/php-8.4-test-linux-x86_64 \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }}
+          echo "CLI upload successful!"
+
+      - name: "Test FPM upload"
+        run: |
+          echo "Testing FPM upload..."
+          aws s3 cp test-buildroot/bin/php-fpm \
+            s3://${{ secrets.R2_BUCKET_NAME }}/fpm/php-8.4-test-linux-x86_64 \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }}
+          echo "FPM upload successful!"
+
+      - name: "Test Micro upload"
+        run: |
+          echo "Testing Micro upload..."
+          aws s3 cp test-buildroot/bin/micro.sfx \
+            s3://${{ secrets.R2_BUCKET_NAME }}/micro/php-8.4-test-linux-x86_64 \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }}
+          echo "Micro upload successful!"
+
+      - name: "Test License files upload"
+        run: |
+          echo "Testing License upload..."
+          tar -czf test-licenses.tar.gz -C test-buildroot/license .
+          aws s3 cp test-licenses.tar.gz \
+            s3://${{ secrets.R2_BUCKET_NAME }}/licenses/php-8.4-test-linux-x86_64.tar.gz \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }}
+          echo "License upload successful!"
+
+      - name: "Test Metadata upload"
+        run: |
+          echo "Testing Metadata upload..."
+          jq -s '.[0] * .[1]' test-buildroot/metadata/build-extensions.json test-buildroot/metadata/build-libraries.json > test-metadata.json
+          aws s3 cp test-metadata.json \
+            s3://${{ secrets.R2_BUCKET_NAME }}/metadata/php-8.4-test-linux-x86_64.json \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }}
+          echo "Metadata upload successful!"
+
+      - name: "Test Latest index upload"
+        run: |
+          echo "Testing Latest index upload..."
+          echo '{
+            "php_version": "8.4",
+            "os": "test-linux-x86_64",
+            "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'",
+            "cli": true,
+            "micro": true,
+            "fpm": true,
+            "test": true
+          }' | jq . > test-latest-build.json
+
+          aws s3 cp test-latest-build.json \
+            s3://${{ secrets.R2_BUCKET_NAME }}/latest-test-linux-x86_64-8.4.json \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }}
+          echo "Latest index upload successful!"
+
+      - name: "List uploaded files"
+        run: |
+          echo "Listing uploaded test files..."
+          aws s3 ls s3://${{ secrets.R2_BUCKET_NAME }}/ --recursive --endpoint-url ${{ secrets.R2_ENDPOINT }} | grep test
+          echo "All tests completed successfully!"
+
+      - name: "Cleanup test files (optional)"
+        if: success()
+        run: |
+          echo "Cleaning up test files..."
+          aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/cli/php-8.4-test-linux-x86_64 --endpoint-url ${{ secrets.R2_ENDPOINT }}
+          aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/fpm/php-8.4-test-linux-x86_64 --endpoint-url ${{ secrets.R2_ENDPOINT }}
+          aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/micro/php-8.4-test-linux-x86_64 --endpoint-url ${{ secrets.R2_ENDPOINT }}
+          aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/licenses/php-8.4-test-linux-x86_64.tar.gz --endpoint-url ${{ secrets.R2_ENDPOINT }}
+          aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/metadata/php-8.4-test-linux-x86_64.json --endpoint-url ${{ secrets.R2_ENDPOINT }}
+          aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/latest-test-linux-x86_64-8.4.json --endpoint-url ${{ secrets.R2_ENDPOINT }}
+          echo "Cleanup completed!"
