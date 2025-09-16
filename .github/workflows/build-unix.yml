@@ -231,44 +231,70 @@ jobs:
             BUILD_CMD="$BUILD_CMD --build-fpm"
           fi
           eval "$BUILD_CMD"
+
+      # Configure AWS credentials for R2
+      - name: "Configure AWS credentials for R2"
+        uses: aws-actions/configure-aws-credentials@v5.0.0
+        with:
+          aws-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          aws-region: auto
 #      - name: Setup tmate session
 #        if: ${{ failure() }}
 #        uses: mxschmitt/action-tmate@v3
 
-      # Upload cli executable
+      # Upload cli executable to R2
       - if: ${{ inputs.build-cli == true }}
-        name: "Upload PHP cli SAPI"
-        uses: actions/upload-artifact@v4
-        with:
-          name: php-cli-${{ matrix.php-version }}-${{ inputs.os }}
-          path: buildroot/bin/php
+        name: "Upload PHP cli to R2"
+        run: |
+          aws s3 cp buildroot/bin/php \
+            s3://${{ secrets.R2_BUCKET_NAME }}/cli/php-${{ matrix.php-version }}-${{ inputs.os }} \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }}
 
-      # Upload micro self-extracted executable
+      # Upload micro self-extracted executable to R2
       - if: ${{ inputs.build-micro == true }}
-        name: "Upload PHP micro SAPI"
-        uses: actions/upload-artifact@v4
-        with:
-          name: php-micro-${{ matrix.php-version }}-${{ inputs.os }}
-          path: buildroot/bin/micro.sfx
+        name: "Upload PHP micro to R2"
+        run: |
+          aws s3 cp buildroot/bin/micro.sfx \
+            s3://${{ secrets.R2_BUCKET_NAME }}/micro/php-${{ matrix.php-version }}-${{ inputs.os }} \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }}
 
-      # Upload fpm executable
+      # Upload fpm executable to R2
       - if: ${{ inputs.build-fpm == true }}
-        name: "Upload PHP fpm SAPI"
-        uses: actions/upload-artifact@v4
-        with:
-          name: php-fpm-${{ matrix.php-version }}-${{ inputs.os }}
-          path: buildroot/bin/php-fpm
+        name: "Upload PHP fpm to R2"
+        run: |
+          aws s3 cp buildroot/bin/php-fpm \
+            s3://${{ secrets.R2_BUCKET_NAME }}/fpm/php-${{ matrix.php-version }}-${{ inputs.os }} \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }}
 
-      # Upload extensions metadata
-      - uses: actions/upload-artifact@v4
-        name: "Upload License Files"
-        with:
-          name: license-files-${{ matrix.php-version }}-${{ inputs.os }}
-          path: buildroot/license/
-      - uses: actions/upload-artifact@v4
-        name: "Upload Build Metadata"
-        with:
-          name: build-meta-${{ matrix.php-version }}-${{ inputs.os }}
-          path: |
-            buildroot/build-extensions.json
-            buildroot/build-libraries.json
+      # Upload license files to R2
+      - name: "Upload License Files to R2"
+        run: |
+          tar -czf licenses.tar.gz -C buildroot/license .
+          aws s3 cp licenses.tar.gz \
+            s3://${{ secrets.R2_BUCKET_NAME }}/licenses/php-${{ matrix.php-version }}-${{ inputs.os }}.tar.gz \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }}
+
+      # Upload build metadata to R2
+      - name: "Upload Build Metadata to R2"
+        run: |
+          jq -s '.[0] * .[1]' buildroot/build-extensions.json buildroot/build-libraries.json > metadata.json
+          aws s3 cp metadata.json \
+            s3://${{ secrets.R2_BUCKET_NAME }}/metadata/php-${{ matrix.php-version }}-${{ inputs.os }}.json \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }}
+
+      # Update latest build index
+      - name: "Update latest index"
+        run: |
+          echo '{
+            "php_version": "${{ matrix.php-version }}",
+            "os": "${{ inputs.os }}",
+            "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'",
+            "cli": ${{ inputs.build-cli }},
+            "micro": ${{ inputs.build-micro }},
+            "fpm": ${{ inputs.build-fpm }}
+          }' | jq . > latest-build.json
+
+          aws s3 cp latest-build.json \
+            s3://${{ secrets.R2_BUCKET_NAME }}/latest-${{ inputs.os }}-${{ matrix.php-version }}.json \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }}
