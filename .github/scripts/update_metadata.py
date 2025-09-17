@@ -10,6 +10,7 @@ from datetime import datetime, UTC
 def main():
     parser = argparse.ArgumentParser(description='Update metadata.json with build results')
     parser.add_argument('--build-matrix', required=True, help='JSON build matrix from check-and-sync')
+    parser.add_argument('--checksums-file', required=True, help='JSON file containing checksums from build jobs')
     args = parser.parse_args()
 
     # Load current metadata
@@ -18,6 +19,20 @@ def main():
 
     # Update last_sync timestamp
     metadata['last_sync'] = datetime.now(UTC).isoformat().replace('+00:00', 'Z')
+
+    # Load checksums (required)
+    checksums_map = {}
+    with open(args.checksums_file, 'r') as f:
+        checksums_data = json.load(f)
+        # Handle both single checksum and array of checksums
+        if isinstance(checksums_data, list):
+            for checksum in checksums_data:
+                if checksum:  # Skip null/empty entries
+                    key = f"{checksum['php-version']}-{checksum['os']}"
+                    checksums_map[key] = checksum
+        elif checksums_data:  # Single checksum object
+            key = f"{checksums_data['php-version']}-{checksums_data['os']}"
+            checksums_map[key] = checksums_data
 
     # Update versions with API data based on build matrix
     build_matrix = json.loads(args.build_matrix or '{"include": []}')
@@ -55,9 +70,13 @@ def main():
             })
 
         # Update build info for this OS
+        checksum_key = f"{version_name}-{os}"
+        checksum_data = checksums_map[checksum_key]
+
         metadata['versions'][version_name]['builds'][os] = {
             'last_build': datetime.now(UTC).isoformat().replace('+00:00', 'Z'),
-            'sha256': 'placeholder-sha256'  # TODO: Calculate actual SHA256
+            'cli_sha512': checksum_data['cli_sha512'],
+            'fpm_sha512': checksum_data['fpm_sha512']
         }
 
     # Save updated metadata

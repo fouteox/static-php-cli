@@ -50,6 +50,8 @@ jobs:
     needs: [check-and-sync]
     if: needs.check-and-sync.outputs.should-build == 'true'
     timeout-minutes: 240
+    outputs:
+      checksums: ${{ steps.collect-checksums.outputs.checksums }}
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -98,19 +100,39 @@ jobs:
 
       # Upload cli executable to R2
       - name: "Compress and Upload PHP cli to R2"
+        id: cli-upload
         run: |
           xz -c buildroot/bin/php > php-cli-${{ matrix.php-version }}-${{ matrix.os }}.xz
+          CLI_SHA512=$(sha512sum php-cli-${{ matrix.php-version }}-${{ matrix.os }}.xz | cut -d' ' -f1)
+          echo "cli_sha512=$CLI_SHA512" >> $GITHUB_OUTPUT
           aws s3 cp php-cli-${{ matrix.php-version }}-${{ matrix.os }}.xz \
             s3://${{ secrets.R2_BUCKET_NAME }}/php-cli-${{ matrix.php-version }}-${{ matrix.os }}.xz \
             --endpoint-url ${{ secrets.R2_ENDPOINT }}
 
       # Upload fpm executable to R2
       - name: "Compress and Upload PHP fpm to R2"
+        id: fpm-upload
         run: |
           xz -c buildroot/bin/php-fpm > php-fpm-${{ matrix.php-version }}-${{ matrix.os }}.xz
+          FPM_SHA512=$(sha512sum php-fpm-${{ matrix.php-version }}-${{ matrix.os }}.xz | cut -d' ' -f1)
+          echo "fpm_sha512=$FPM_SHA512" >> $GITHUB_OUTPUT
           aws s3 cp php-fpm-${{ matrix.php-version }}-${{ matrix.os }}.xz \
             s3://${{ secrets.R2_BUCKET_NAME }}/php-fpm-${{ matrix.php-version }}-${{ matrix.os }}.xz \
             --endpoint-url ${{ secrets.R2_ENDPOINT }}
+
+      # Collect checksums for output
+      - name: "Collect checksums"
+        id: collect-checksums
+        run: |
+          cat > checksums.json <<EOF
+          {
+            "php-version": "${{ matrix.php-version }}",
+            "os": "${{ matrix.os }}",
+            "cli_sha512": "${{ steps.cli-upload.outputs.cli_sha512 }}",
+            "fpm_sha512": "${{ steps.fpm-upload.outputs.fpm_sha512 }}"
+          }
+          EOF
+          echo "checksums=$(cat checksums.json | jq -c .)" >> $GITHUB_OUTPUT
 
   update-metadata:
     name: "Update central metadata.json"
@@ -135,9 +157,14 @@ jobs:
             echo "Created empty metadata.json"
           fi
 
+          # Collect checksums from all build jobs
+          CHECKSUMS_JSON='${{ toJSON(needs.build.outputs.checksums) }}'
+          echo "$CHECKSUMS_JSON" > checksums.json
+
           # Update metadata with build results
           python3 .github/scripts/update_metadata.py \
-            --build-matrix '${{ needs.check-and-sync.outputs.build-matrix }}'
+            --build-matrix '${{ needs.check-and-sync.outputs.build-matrix }}' \
+            --checksums-file checksums.json
 
           # Upload updated metadata.json to R2
           aws s3 cp metadata.json s3://${{ secrets.R2_BUCKET_NAME }}/metadata.json --endpoint-url ${{ secrets.R2_ENDPOINT }}
