@@ -80,17 +80,20 @@ jobs:
 
       - name: "Download sources"
         run: |
+          # Define extensions to download and build
+          EXTENSIONS="bcmath,bz2,calendar,ctype,curl,dba,dom,exif,ffi,fileinfo,filter,ftp,gd,gmp,iconv,igbinary,imagick,imap,intl,ldap,lz4,mbstring,mongodb,mysqli,mysqlnd,opcache,openssl,pcntl,pdo,pdo_mysql,pdo_pgsql,pdo_sqlite,pdo_sqlsrv,pgsql,phar,posix,readline,redis,session,shmop,simplexml,soap,sockets,sodium,sqlite3,sqlsrv,sysvmsg,sysvsem,sysvshm,tokenizer,xml,xmlreader,xmlwriter,xsl,zip,zlib"
+
           # Define build commands for macOS aarch64
           DOWN_CMD="curl -fsSL -o spc https://dl.static-php.dev/static-php-cli/spc-bin/nightly/spc-macos-aarch64 && chmod +x spc && ./spc doctor --auto-fix && ./spc download"
 
-          DOWNLOAD_CMD="$DOWN_CMD --with-php=${{ matrix.php-version }} --ignore-cache-sources=php-src --prefer-pre-built"
+          DOWNLOAD_CMD="$DOWN_CMD --with-php=${{ matrix.php-version }} --for-extensions=\"$EXTENSIONS\" --ignore-cache-sources=php-src --prefer-pre-built"
           eval "$DOWNLOAD_CMD"
+
+          # Export extensions for next step
+          echo "EXTENSIONS=$EXTENSIONS" >> $GITHUB_ENV
 
       - name: "Build PHP"
         run: |
-          # Define build command and extensions
-          EXTENSIONS="bcmath,bz2,calendar,ctype,curl,dba,dom,exif,ffi,fileinfo,filter,ftp,gd,gmp,iconv,igbinary,imagick,imap,intl,ldap,lz4,mbstring,mongodb,mysqli,mysqlnd,opcache,openssl,pcntl,pdo,pdo_mysql,pdo_pgsql,pdo_sqlite,pdo_sqlsrv,pgsql,phar,posix,readline,redis,session,shmop,simplexml,soap,sockets,sodium,sqlite3,sqlsrv,sysvmsg,sysvsem,sysvshm,tokenizer,xml,xmlreader,xmlwriter,xsl,zip,zlib"
-
           ./spc build $EXTENSIONS --build-cli --build-fpm
 
       # Upload cli executable to R2
