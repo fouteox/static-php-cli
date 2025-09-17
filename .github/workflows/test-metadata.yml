@@ -1,0 +1,170 @@
+name: Test Metadata Update
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/test-metadata.yml'
+      - '.github/scripts/update_metadata.py'
+
+jobs:
+  # Simulate multiple build jobs
+  simulate-build:
+    name: "Simulate Build ${{ matrix.php-version }}"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - php-version: "8.4"
+            os: "linux-x64"
+          - php-version: "8.3"
+            os: "linux-x64"
+    outputs:
+      checksums: ${{ steps.generate-checksums.outputs.checksums }}
+    steps:
+      - name: "Generate fake checksums"
+        id: generate-checksums
+        run: |
+          cat > checksums.json <<EOF
+          {
+            "php-version": "${{ matrix.php-version }}",
+            "os": "${{ matrix.os }}",
+            "cli_sha512": "fake_cli_sha512_${{ matrix.php-version }}_${{ matrix.os }}",
+            "fpm_sha512": "fake_fpm_sha512_${{ matrix.php-version }}_${{ matrix.os }}"
+          }
+          EOF
+          echo "checksums=$(cat checksums.json | jq -c .)" >> $GITHUB_OUTPUT
+
+  test-metadata-update:
+    name: "Test Metadata Update"
+    needs: simulate-build
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v5
+
+      - name: "Debug - Show raw output from build"
+        run: |
+          echo "Raw output from needs.simulate-build.outputs.checksums:"
+          echo '${{ needs.simulate-build.outputs.checksums }}'
+          echo ""
+          echo "Type of output:"
+          echo '${{ needs.simulate-build.outputs.checksums }}' | python3 -c "import sys, json; data = sys.stdin.read(); print(f'Length: {len(data)}'); print(f'First char: {repr(data[0])}'); print(f'Is it a string that starts with quote?: {data[0] == chr(34)}')"
+
+      - name: "Debug - Write to file and inspect"
+        run: |
+          echo "Method 1 - Direct echo with single quotes:"
+          echo '${{ toJSON(needs.simulate-build.outputs.checksums) }}' > checksums1.json
+          echo "Content of checksums1.json:"
+          cat checksums1.json
+          echo ""
+          echo "Hexdump of first 100 bytes:"
+          hexdump -C checksums1.json | head -5
+          echo ""
+
+          echo "Method 2 - Without toJSON:"
+          echo '${{ needs.simulate-build.outputs.checksums }}' > checksums2.json
+          echo "Content of checksums2.json:"
+          cat checksums2.json
+          echo ""
+
+          echo "Method 3 - Force array wrapping:"
+          echo '[${{ needs.simulate-build.outputs.checksums }}]' > checksums3.json
+          echo "Content of checksums3.json:"
+          cat checksums3.json
+          echo ""
+
+      - name: "Test Python parsing - Method 1"
+        continue-on-error: true
+        run: |
+          echo "Testing Method 1 (with toJSON):"
+          python3 -c "
+import json
+with open('checksums1.json', 'r') as f:
+    content = f.read()
+    print(f'Raw content: {repr(content[:100])}...')
+    try:
+        data = json.loads(content)
+        print(f'Successfully parsed as: {type(data)}')
+        print(f'Data: {data}')
+    except json.JSONDecodeError as e:
+        print(f'Failed to parse: {e}')
+        # Try double parse
+        try:
+            data = json.loads(json.loads(content))
+            print(f'Successfully double-parsed as: {type(data)}')
+            print(f'Data: {data}')
+        except:
+            print('Double parse also failed')
+"
+
+      - name: "Test Python parsing - Method 3"
+        continue-on-error: true
+        run: |
+          echo "Testing Method 3 (force array):"
+          python3 -c "
+import json
+with open('checksums3.json', 'r') as f:
+    content = f.read()
+    print(f'Raw content: {repr(content[:100])}...')
+    try:
+        data = json.loads(content)
+        print(f'Successfully parsed as: {type(data)}')
+        print(f'Data: {data}')
+    except json.JSONDecodeError as e:
+        print(f'Failed to parse: {e}')
+"
+
+      - name: "Create test metadata"
+        run: |
+          echo '{"last_sync": "", "versions": {}}' > metadata.json
+
+          # Create a working checksums file based on test results
+          echo "Creating working checksums file..."
+
+          # Try the array approach
+          echo '[${{ needs.simulate-build.outputs.checksums }}]' > checksums_test.json
+
+          # Build matrix for testing
+          cat > build_matrix.json <<EOF
+          {
+            "include": [
+              {
+                "php-version": "8.4",
+                "os": "linux-x64",
+                "versionId": 80400,
+                "releaseDate": "2024-11-21",
+                "activeSupportEndDate": "2026-12-31",
+                "eolDate": "2028-12-31",
+                "isEOLVersion": false,
+                "isSecureVersion": true,
+                "isLatestVersion": true,
+                "isFutureVersion": false,
+                "isNextVersion": false
+              },
+              {
+                "php-version": "8.3",
+                "os": "linux-x64",
+                "versionId": 80300,
+                "releaseDate": "2023-11-23",
+                "activeSupportEndDate": "2025-12-31",
+                "eolDate": "2027-12-31",
+                "isEOLVersion": false,
+                "isSecureVersion": true,
+                "isLatestVersion": false,
+                "isFutureVersion": false,
+                "isNextVersion": false
+              }
+            ]
+          }
+          EOF
+
+      - name: "Test update_metadata.py with array format"
+        continue-on-error: true
+        run: |
+          python3 .github/scripts/update_metadata.py \
+            --build-matrix "$(cat build_matrix.json)" \
+            --checksums-file checksums_test.json
+
+          echo "Metadata updated successfully!"
+          echo "Content of metadata.json:"
+          cat metadata.json | jq .

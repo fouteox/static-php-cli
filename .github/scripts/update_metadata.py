@@ -23,16 +23,46 @@ def main():
     # Load checksums (required)
     checksums_map = {}
     with open(args.checksums_file, 'r') as f:
-        checksums_data = json.load(f)
+        raw_content = f.read()
+
+        # Debug output
+        print(f"DEBUG: Raw checksums file content (first 200 chars): {raw_content[:200]}")
+
+        # Try to parse the JSON
+        try:
+            checksums_data = json.loads(raw_content)
+        except json.JSONDecodeError as e:
+            # If it fails, it might be double-encoded (a JSON string containing JSON)
+            print(f"DEBUG: First parse failed: {e}")
+            print("DEBUG: Attempting double parse...")
+            checksums_data = json.loads(json.loads(raw_content))
+
+        print(f"DEBUG: Parsed checksums data type: {type(checksums_data)}")
+
+        # Handle different formats
+        if isinstance(checksums_data, str):
+            # It's still a string, try parsing again
+            print("DEBUG: Data is still a string, parsing again...")
+            checksums_data = json.loads(checksums_data)
+
         # Handle both single checksum and array of checksums
         if isinstance(checksums_data, list):
+            print(f"DEBUG: Processing array of {len(checksums_data)} checksums")
             for checksum in checksums_data:
                 if checksum:  # Skip null/empty entries
+                    # Handle case where each item might be a string
+                    if isinstance(checksum, str):
+                        checksum = json.loads(checksum)
                     key = f"{checksum['php-version']}-{checksum['os']}"
                     checksums_map[key] = checksum
+                    print(f"DEBUG: Added checksum for {key}")
         elif checksums_data:  # Single checksum object
+            print("DEBUG: Processing single checksum object")
             key = f"{checksums_data['php-version']}-{checksums_data['os']}"
             checksums_map[key] = checksums_data
+            print(f"DEBUG: Added checksum for {key}")
+
+    print(f"DEBUG: Total checksums loaded: {len(checksums_map)}")
 
     # Update versions with API data based on build matrix
     build_matrix = json.loads(args.build_matrix or '{"include": []}')
