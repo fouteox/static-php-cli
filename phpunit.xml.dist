@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8" ?>
-<phpunit
-        bootstrap="tests/bootstrap.php"
->
-    <php>
-        <env name="SPC_IGNORE_BAD_HASH" value="yes" force="true" />
-        <env name="SPC_SKIP_TOOLCHAIN_CHECK" value="yes" force="true" />
-    </php>
-</phpunit>

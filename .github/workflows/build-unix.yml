@@ -1,179 +1,54 @@
 name: "CI on Unix"
 
 on:
+  schedule:
+    - cron: '0 * * * *'  # Every hour
   workflow_dispatch:
-    inputs:
-      os:
-        required: true
-        description: Build target OS
-        default: 'macos-aarch64'
-        type: choice
-        options:
-          - 'linux-x86_64'
-          - 'linux-aarch64'
-          - 'linux-x86_64-glibc'
-          - 'linux-aarch64-glibc'
-          - 'macos-x86_64'
-          - 'macos-aarch64'
-      php-versions:
-        required: true
-        description: PHP versions to compile (comma separated)
-        default: '8.4,8.3,8.2'
-        type: string
-      extensions:
-        description: Extensions to build (comma separated)
-        default: "bcmath,bz2,calendar,ctype,curl,dba,dom,exif,ffi,fileinfo,filter,ftp,gd,gmp,iconv,igbinary,imagick,imap,intl,ldap,lz4,mbstring,mongodb,mysqli,mysqlnd,opcache,openssl,pcntl,pdo,pdo_mysql,pdo_pgsql,pdo_sqlite,pdo_sqlsrv,pgsql,phar,posix,readline,redis,session,shmop,simplexml,soap,sockets,sodium,sqlite3,sqlsrv,sysvmsg,sysvsem,sysvshm,tokenizer,xml,xmlreader,xmlwriter,xsl,zip,zlib"
-        required: true
-        type: string
-      extra-libs:
-        description: Extra libraries to build (optional, comma separated)
-        type: string
-      build-cli:
-        description: Build cli binary
-        default: true
-        type: boolean
-      build-micro:
-        description: Build phpmicro binary
-        type: boolean
-      build-fpm:
-        description: Build fpm binary
-        default: true
-        type: boolean
-      prefer-pre-built:
-        description: Prefer pre-built binaries (reduce build time)
-        type: boolean
-        default: true
-      debug:
-        description: Show full build logs
-        type: boolean
-      no-strip:
-        description: Keep debug symbols for debugging
-        type: boolean
-        default: false
-  workflow_call:
-    inputs:
-      os:
-        required: true
-        description: Build target OS
-        default: 'macos-aarch64'
-        type: string
-      php-versions:
-        required: true
-        description: PHP versions to compile (comma separated)
-        default: '8.4'
-        type: string
-      extensions:
-        description: Extensions to build (comma separated)
-        required: true
-        type: string
-      extra-libs:
-        description: Extra libraries to build (optional, comma separated)
-        type: string
-      build-cli:
-        description: Build cli binary
-        default: true
-        type: boolean
-      build-micro:
-        description: Build phpmicro binary
-        type: boolean
-      build-fpm:
-        description: Build fpm binary
-        default: true
-        type: boolean
-      prefer-pre-built:
-        description: Prefer pre-built binaries (reduce build time)
-        type: boolean
-        default: true
-      debug:
-        description: Show full build logs
-        type: boolean
-      no-strip:
-        description: Keep debug symbols for debugging
-        type: boolean
-        default: false
 
 env:
     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
-  define-build:
-    name: "Define Build Scripts"
+  check-and-sync:
+    name: "Check PHP versions and sync"
     runs-on: ubuntu-latest
     outputs:
-      run: ${{ steps.gendef.outputs.run }}
-      download: ${{ steps.gendef.outputs.download }}
-      build: ${{ steps.gendef.outputs.build }}
-      php-versions: ${{ steps.gendef.outputs.php-versions }}
+      build-matrix: ${{ steps.sync.outputs.matrix }}
+      eol-versions: ${{ steps.sync.outputs.eol }}
+      should-build: ${{ steps.sync.outputs.should-build }}
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
     steps:
       - name: "Checkout"
         uses: actions/checkout@v5
 
-      - name: "Define"
-        id: gendef
+      - name: "Sync PHP versions"
+        id: sync
         run: |
-          case "${{ inputs.os }}" in
-            linux-x86_64)
-              DOWN_CMD="./bin/spc-alpine-docker download"
-              BUILD_CMD="./bin/spc-alpine-docker build"
-              RUNS_ON="ubuntu-latest"
-              ;;
-            linux-aarch64)
-              DOWN_CMD="./bin/spc-alpine-docker download"
-              BUILD_CMD="./bin/spc-alpine-docker build"
-              RUNS_ON="ubuntu-24.04-arm"
-              ;;
-            linux-x86_64-glibc)
-              DOWN_CMD="./bin/spc-gnu-docker download"
-              BUILD_CMD="./bin/spc-gnu-docker build"
-              RUNS_ON="ubuntu-22.04"
-              ;;
-            linux-aarch64-glibc)
-              DOWN_CMD="./bin/spc-gnu-docker download"
-              BUILD_CMD="./bin/spc-gnu-docker build"
-              RUNS_ON="ubuntu-22.04-arm"
-              ;;
-            macos-x86_64)
-              DOWN_CMD="curl -fsSL -o spc https://dl.static-php.dev/static-php-cli/spc-bin/nightly/spc-macos-x86_64 && chmod +x spc && ./spc doctor --auto-fix && ./spc download"
-              BUILD_CMD="./spc build"
-              RUNS_ON="macos-13"
-              ;;
-            macos-aarch64)
-              DOWN_CMD="curl -fsSL -o spc https://dl.static-php.dev/static-php-cli/spc-bin/nightly/spc-macos-aarch64 && chmod +x spc && ./spc doctor --auto-fix && ./spc download"
-              BUILD_CMD="./spc build"
-              RUNS_ON="macos-latest"
-              ;;
-          esac
-          BUILD_CMD="$BUILD_CMD ${{ inputs.extensions }}"
-          if [ -n "${{ inputs.extra-libs }}" ]; then
-            DOWN_CMD="$DOWN_CMD --for-libs=${{ inputs.extra-libs }}"
-            BUILD_CMD="$BUILD_CMD --with-libs=${{ inputs.extra-libs }}"
+          # Download current metadata.json from R2 (or create empty if not exists)
+          if aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata.json metadata.json --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null; then
+            echo "Downloaded existing metadata.json"
+          else
+            echo '{"last_sync": "", "versions": {}}' > metadata.json
+            echo "Created empty metadata.json"
           fi
-          if [ ${{ inputs.debug }} == true ]; then
-            DOWN_CMD="$DOWN_CMD --debug"
-            BUILD_CMD="$BUILD_CMD --debug"
-          fi
-          if [ ${{ inputs.prefer-pre-built }} == true ]; then
-              DOWN_CMD="$DOWN_CMD --prefer-pre-built"
-          fi
-          if [ ${{ inputs.build-cli }} == true ]; then
-              BUILD_CMD="$BUILD_CMD --build-cli"
-          fi
-          if [ ${{ inputs.build-micro }} == true ]; then
-              BUILD_CMD="$BUILD_CMD --build-micro"
-          fi
-          if [ ${{ inputs.build-fpm }} == true ]; then
-              BUILD_CMD="$BUILD_CMD --build-fpm"
-          fi
-          echo 'download='"$DOWN_CMD" >> "$GITHUB_OUTPUT"
-          echo 'build='"$BUILD_CMD" >> "$GITHUB_OUTPUT"
-          echo 'run='"$RUNS_ON" >> "$GITHUB_OUTPUT"
 
-          PHP_VERSIONS=$(echo '${{ inputs.php-versions }}' | sed 's/,/","/g' | sed 's/^/["/' | sed 's/$/"]/')
-          echo "php-versions=$PHP_VERSIONS" >> "$GITHUB_OUTPUT"
+          # Fetch PHP.watch API
+          echo "Fetching PHP.watch API..."
+          curl -fsSL https://php.watch/api/v1/versions > api_response.json
+
+          # Run check versions script
+          python3 .github/scripts/check_versions.py
+          cat github_output.txt >> "$GITHUB_OUTPUT"
+
+  # Build job (dynamic matrix from check-and-sync)
   build:
-    name: "Build PHP ${{ matrix.php-version }} on ${{ inputs.os }}"
-    runs-on: ${{ needs.define-build.outputs.run }}
-    needs: define-build
+    name: "Build PHP ${{ matrix.php-version }} on ${{ matrix.os }}"
+    runs-on: ${{ matrix.runs-on }}
+    needs: [check-and-sync]
+    if: needs.check-and-sync.outputs.should-build == 'true'
     timeout-minutes: 240
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -181,8 +56,7 @@ jobs:
       AWS_DEFAULT_REGION: us-east-1
     strategy:
       fail-fast: false
-      matrix:
-        php-version: ${{ fromJSON(needs.define-build.outputs.php-versions) }}
+      matrix: ${{ fromJSON(needs.check-and-sync.outputs.build-matrix) }}
     steps:
       - name: "Checkout"
         uses: actions/checkout@v5
@@ -202,69 +76,112 @@ jobs:
         uses: actions/cache@v4
         with:
           path: downloads
-          key: php-dependencies-${{ matrix.php-version }}-${{ inputs.os }}
+          key: php-dependencies-${{ matrix.php-version }}-${{ matrix.os }}
+
       - name: "Download sources"
         run: |
-          DOWNLOAD_CMD="${{ needs.define-build.outputs.download }} --with-php=${{ matrix.php-version }} --for-extensions=${{ inputs.extensions }} --ignore-cache-sources=php-src"
-          if [ -n "${{ inputs.extra-libs }}" ]; then
-            DOWNLOAD_CMD="$DOWNLOAD_CMD --for-libs=${{ inputs.extra-libs }}"
-          fi
-          if [ ${{ inputs.debug }} == true ]; then
-            DOWNLOAD_CMD="$DOWNLOAD_CMD --debug"
-          fi
-          if [ ${{ inputs.prefer-pre-built }} == true ]; then
-            DOWNLOAD_CMD="$DOWNLOAD_CMD --prefer-pre-built"
-          fi
+          # Define build commands for macOS aarch64
+          DOWN_CMD="curl -fsSL -o spc https://dl.static-php.dev/static-php-cli/spc-bin/nightly/spc-macos-aarch64 && chmod +x spc && ./spc doctor --auto-fix && ./spc download"
+
+          DOWNLOAD_CMD="$DOWN_CMD --with-php=${{ matrix.php-version }} --ignore-cache-sources=php-src --prefer-pre-built"
           eval "$DOWNLOAD_CMD"
+
       - name: "Build PHP"
         run: |
-          BUILD_CMD="${{ needs.define-build.outputs.build }}"
-          if [ -n "${{ inputs.extra-libs }}" ]; then
-            BUILD_CMD="$BUILD_CMD --with-libs=${{ inputs.extra-libs }}"
-          fi
-          if [ ${{ inputs.debug }} == true ]; then
-            BUILD_CMD="$BUILD_CMD --debug"
-          fi
-          if [ ${{ inputs.build-cli }} == true ]; then
-            BUILD_CMD="$BUILD_CMD --build-cli"
-          fi
-          if [ ${{ inputs.build-micro }} == true ]; then
-            BUILD_CMD="$BUILD_CMD --build-micro"
-          fi
-          if [ ${{ inputs.build-fpm }} == true ]; then
-            BUILD_CMD="$BUILD_CMD --build-fpm"
-          fi
-          eval "$BUILD_CMD"
-#      - name: Setup tmate session
-#        if: ${{ failure() }}
-#        uses: mxschmitt/action-tmate@v3
+          # Define build command and extensions
+          EXTENSIONS="bcmath,bz2,calendar,ctype,curl,dba,dom,exif,ffi,fileinfo,filter,ftp,gd,gmp,iconv,igbinary,imagick,imap,intl,ldap,lz4,mbstring,mongodb,mysqli,mysqlnd,opcache,openssl,pcntl,pdo,pdo_mysql,pdo_pgsql,pdo_sqlite,pdo_sqlsrv,pgsql,phar,posix,readline,redis,session,shmop,simplexml,soap,sockets,sodium,sqlite3,sqlsrv,sysvmsg,sysvsem,sysvshm,tokenizer,xml,xmlreader,xmlwriter,xsl,zip,zlib"
+
+          ./spc build $EXTENSIONS --build-cli --build-fpm
 
       # Upload cli executable to R2
-      - if: ${{ inputs.build-cli == true }}
-        name: "Compress and Upload PHP cli to R2"
+      - name: "Compress and Upload PHP cli to R2"
         run: |
-          xz -c buildroot/bin/php > php-cli-${{ matrix.php-version }}-${{ inputs.os }}.xz
-          aws s3 cp php-cli-${{ matrix.php-version }}-${{ inputs.os }}.xz \
-            s3://${{ secrets.R2_BUCKET_NAME }}/php-cli-${{ matrix.php-version }}-${{ inputs.os }}.xz \
+          xz -c buildroot/bin/php > php-cli-${{ matrix.php-version }}-${{ matrix.os }}.xz
+          aws s3 cp php-cli-${{ matrix.php-version }}-${{ matrix.os }}.xz \
+            s3://${{ secrets.R2_BUCKET_NAME }}/php-cli-${{ matrix.php-version }}-${{ matrix.os }}.xz \
             --endpoint-url ${{ secrets.R2_ENDPOINT }}
 
       # Upload fpm executable to R2
-      - if: ${{ inputs.build-fpm == true }}
-        name: "Compress and Upload PHP fpm to R2"
+      - name: "Compress and Upload PHP fpm to R2"
         run: |
-          xz -c buildroot/bin/php-fpm > php-fpm-${{ matrix.php-version }}-${{ inputs.os }}.xz
-          aws s3 cp php-fpm-${{ matrix.php-version }}-${{ inputs.os }}.xz \
-            s3://${{ secrets.R2_BUCKET_NAME }}/php-fpm-${{ matrix.php-version }}-${{ inputs.os }}.xz \
+          xz -c buildroot/bin/php-fpm > php-fpm-${{ matrix.php-version }}-${{ matrix.os }}.xz
+          aws s3 cp php-fpm-${{ matrix.php-version }}-${{ matrix.os }}.xz \
+            s3://${{ secrets.R2_BUCKET_NAME }}/php-fpm-${{ matrix.php-version }}-${{ matrix.os }}.xz \
             --endpoint-url ${{ secrets.R2_ENDPOINT }}
 
-      # Upload build metadata to R2
-      - name: "Upload Build Metadata to R2"
-        run: |
-          echo '{
-            "php_version": "${{ matrix.php-version }}",
-            "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"
-          }' | jq . > php-metadata-${{ matrix.php-version }}-${{ inputs.os }}.json
-          aws s3 cp php-metadata-${{ matrix.php-version }}-${{ inputs.os }}.json \
-            s3://${{ secrets.R2_BUCKET_NAME }}/php-metadata-${{ matrix.php-version }}-${{ inputs.os }}.json \
-            --endpoint-url ${{ secrets.R2_ENDPOINT }}
+  update-metadata:
+    name: "Update central metadata.json"
+    runs-on: ubuntu-latest
+    needs: [check-and-sync, build]
+    if: needs.build.result == 'success'
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v5
 
+      - name: "Update metadata.json"
+        run: |
+          # Download current metadata.json from R2 (or create empty if not exists)
+          if aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata.json metadata.json --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null; then
+            echo "Downloaded existing metadata.json"
+          else
+            echo '{"last_sync": "", "versions": {}}' > metadata.json
+            echo "Created empty metadata.json"
+          fi
+
+          # Update metadata with build results
+          python3 .github/scripts/update_metadata.py \
+            --build-matrix '${{ needs.check-and-sync.outputs.build-matrix }}'
+
+          # Upload updated metadata.json to R2
+          aws s3 cp metadata.json s3://${{ secrets.R2_BUCKET_NAME }}/metadata.json --endpoint-url ${{ secrets.R2_ENDPOINT }}
+          echo "Uploaded updated metadata.json to R2"
+
+  cleanup-eol:
+    name: "Cleanup EOL versions"
+    runs-on: ubuntu-latest
+    needs: [check-and-sync, update-metadata]
+    if: needs.check-and-sync.outputs.eol-versions != '[]'
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v5
+
+      - name: "Cleanup EOL versions"
+        run: |
+          EOL_VERSIONS='${{ needs.check-and-sync.outputs.eol-versions }}'
+          echo "EOL versions to cleanup: $EOL_VERSIONS"
+
+          # Define all OS targets
+          ALL_OS="macos-aarch64"
+
+          # Parse EOL versions from JSON array
+          echo "$EOL_VERSIONS" | jq -r '.[]' | while read -r version; do
+            echo "Cleaning up PHP $version..."
+
+            for os in $ALL_OS; do
+              echo "  Removing files for $version on $os"
+
+              # Remove CLI binary
+              aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/php-cli-$version-$os.xz \
+                --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null || echo "    php-cli-$version-$os.xz not found"
+
+              # Remove FPM binary
+              aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/php-fpm-$version-$os.xz \
+                --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null || echo "    php-fpm-$version-$os.xz not found"
+            done
+          done
+
+          # Remove EOL versions from metadata.json
+          if aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata.json metadata.json --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null; then
+            python3 .github/scripts/cleanup_eol_metadata.py \
+              --eol-versions '${{ needs.check-and-sync.outputs.eol-versions }}'
+            aws s3 cp metadata.json s3://${{ secrets.R2_BUCKET_NAME }}/metadata.json --endpoint-url ${{ secrets.R2_ENDPOINT }}
+            echo "Updated metadata.json after EOL cleanup"
+          fi
