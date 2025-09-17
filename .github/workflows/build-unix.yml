@@ -112,15 +112,21 @@ jobs:
             s3://${{ secrets.R2_BUCKET_NAME }}/"$ARCHIVE_NAME" \
             --endpoint-url ${{ secrets.R2_ENDPOINT }}
 
-          # Save checksum info for metadata update
-          echo "${{ matrix.php-version }},${{ matrix.os }},$ARCHIVE_SHA512" >> checksums.csv
+      # Save checksum to single consolidated artifact
+      - name: "Save checksum"
+        run: |
+          # Load archive info
+          source archive_info.txt
 
-      # Upload checksums as artifact for metadata job
+          # Append to single checksums file
+          echo "${{ matrix.php-version }},${{ matrix.os }},$ARCHIVE_SHA512" >> checksums.txt
+
+      # Upload checksum artifact (one per version-os)
       - name: "Upload checksums"
         uses: actions/upload-artifact@v4
         with:
-          name: checksums-${{ matrix.php-version }}-${{ matrix.os }}
-          path: checksums.csv
+          name: checksum-${{ matrix.php-version }}-${{ matrix.os }}
+          path: checksums.txt
           retention-days: 1
 
   update-metadata:
@@ -138,9 +144,9 @@ jobs:
 
       # Download all checksum artifacts
       - name: "Download checksums"
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
-          pattern: checksums-*
+          pattern: checksum-*
           merge-multiple: true
 
       - name: "Update metadata.json"
@@ -155,13 +161,16 @@ jobs:
 
           BUILD_MATRIX='${{ needs.check-and-sync.outputs.build-matrix }}'
 
-          # Combine all checksum files from build artifacts
-          cat checksums.csv > all_checksums.csv 2>/dev/null || echo "" > all_checksums.csv
+          # Consolidate all downloaded checksum files
+          ALL_CHECKSUMS=""
+          if ls checksums.txt 2>/dev/null; then
+            ALL_CHECKSUMS=$(cat checksums.txt 2>/dev/null | grep -v "^$" | tr '\n' '\n')
+          fi
 
           # Update metadata with build results
           python3 .github/scripts/php_build_manager.py update-metadata \
             --build-matrix "$BUILD_MATRIX" \
-            --archive-checksums "$(cat all_checksums.csv)"
+            --archive-checksums "$ALL_CHECKSUMS"
 
           # Upload updated metadata.json to R2
           aws s3 cp metadata.json s3://${{ secrets.R2_BUCKET_NAME }}/metadata.json --endpoint-url ${{ secrets.R2_ENDPOINT }}
