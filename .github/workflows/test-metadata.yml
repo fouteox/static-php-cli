@@ -77,42 +77,42 @@ jobs:
         continue-on-error: true
         run: |
           echo "Testing Method 1 (with toJSON):"
-          python3 -c "
-import json
-with open('checksums1.json', 'r') as f:
-    content = f.read()
-    print(f'Raw content: {repr(content[:100])}...')
-    try:
-        data = json.loads(content)
-        print(f'Successfully parsed as: {type(data)}')
-        print(f'Data: {data}')
-    except json.JSONDecodeError as e:
-        print(f'Failed to parse: {e}')
-        # Try double parse
-        try:
-            data = json.loads(json.loads(content))
-            print(f'Successfully double-parsed as: {type(data)}')
-            print(f'Data: {data}')
-        except:
-            print('Double parse also failed')
-"
+          python3 <<'EOF'
+          import json
+          with open('checksums1.json', 'r') as f:
+              content = f.read()
+              print(f'Raw content: {repr(content[:100])}...')
+              try:
+                  data = json.loads(content)
+                  print(f'Successfully parsed as: {type(data)}')
+                  print(f'Data: {data}')
+              except json.JSONDecodeError as e:
+                  print(f'Failed to parse: {e}')
+                  # Try double parse
+                  try:
+                      data = json.loads(json.loads(content))
+                      print(f'Successfully double-parsed as: {type(data)}')
+                      print(f'Data: {data}')
+                  except:
+                      print('Double parse also failed')
+          EOF
 
       - name: "Test Python parsing - Method 3"
         continue-on-error: true
         run: |
           echo "Testing Method 3 (force array):"
-          python3 -c "
-import json
-with open('checksums3.json', 'r') as f:
-    content = f.read()
-    print(f'Raw content: {repr(content[:100])}...')
-    try:
-        data = json.loads(content)
-        print(f'Successfully parsed as: {type(data)}')
-        print(f'Data: {data}')
-    except json.JSONDecodeError as e:
-        print(f'Failed to parse: {e}')
-"
+          python3 <<'EOF'
+          import json
+          with open('checksums3.json', 'r') as f:
+              content = f.read()
+              print(f'Raw content: {repr(content[:100])}...')
+              try:
+                  data = json.loads(content)
+                  print(f'Successfully parsed as: {type(data)}')
+                  print(f'Data: {data}')
+              except json.JSONDecodeError as e:
+                  print(f'Failed to parse: {e}')
+          EOF
 
       - name: "Create test metadata"
         run: |
