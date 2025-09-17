@@ -248,15 +248,6 @@ jobs:
             s3://${{ secrets.R2_BUCKET_NAME }}/php-cli-${{ matrix.php-version }}-${{ inputs.os }}.xz \
             --endpoint-url ${{ secrets.R2_ENDPOINT }}
 
-      # Upload micro self-extracted executable to R2
-      - if: ${{ inputs.build-micro == true }}
-        name: "Compress and Upload PHP micro to R2"
-        run: |
-          xz -c buildroot/bin/micro.sfx > php-micro-${{ matrix.php-version }}-${{ inputs.os }}.xz
-          aws s3 cp php-micro-${{ matrix.php-version }}-${{ inputs.os }}.xz \
-            s3://${{ secrets.R2_BUCKET_NAME }}/php-micro-${{ matrix.php-version }}-${{ inputs.os }}.xz \
-            --endpoint-url ${{ secrets.R2_ENDPOINT }}
-
       # Upload fpm executable to R2
       - if: ${{ inputs.build-fpm == true }}
         name: "Compress and Upload PHP fpm to R2"
@@ -266,43 +257,14 @@ jobs:
             s3://${{ secrets.R2_BUCKET_NAME }}/php-fpm-${{ matrix.php-version }}-${{ inputs.os }}.xz \
             --endpoint-url ${{ secrets.R2_ENDPOINT }}
 
-      # Upload license files to R2
-      - name: "Upload License Files to R2"
-        run: |
-          tar -czf php-licenses-${{ matrix.php-version }}-${{ inputs.os }}.tar.gz -C buildroot/license .
-          aws s3 cp php-licenses-${{ matrix.php-version }}-${{ inputs.os }}.tar.gz \
-            s3://${{ secrets.R2_BUCKET_NAME }}/php-licenses-${{ matrix.php-version }}-${{ inputs.os }}.tar.gz \
-            --endpoint-url ${{ secrets.R2_ENDPOINT }}
-
       # Upload build metadata to R2
       - name: "Upload Build Metadata to R2"
         run: |
-          jq -s '{"extensions": .[0], "libraries": .[1]}' buildroot/build-extensions.json buildroot/build-libraries.json > php-metadata-${{ matrix.php-version }}-${{ inputs.os }}.json
+          echo '{
+            "php_version": "${{ matrix.php-version }}",
+            "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"
+          }' | jq . > php-metadata-${{ matrix.php-version }}-${{ inputs.os }}.json
           aws s3 cp php-metadata-${{ matrix.php-version }}-${{ inputs.os }}.json \
             s3://${{ secrets.R2_BUCKET_NAME }}/php-metadata-${{ matrix.php-version }}-${{ inputs.os }}.json \
             --endpoint-url ${{ secrets.R2_ENDPOINT }}
 
-      # Update latest build index
-      - name: "Update latest index"
-        run: |
-          echo '{
-            "php_version": "${{ matrix.php-version }}",
-            "os": "${{ inputs.os }}",
-            "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'",
-            "files": {
-              "cli": ${{ inputs.build-cli }},
-              "micro": ${{ inputs.build-micro }},
-              "fpm": ${{ inputs.build-fpm }}
-            },
-            "filenames": {
-              "cli": "php-cli-${{ matrix.php-version }}-${{ inputs.os }}.xz",
-              "micro": "php-micro-${{ matrix.php-version }}-${{ inputs.os }}.xz",
-              "fpm": "php-fpm-${{ matrix.php-version }}-${{ inputs.os }}.xz",
-              "licenses": "php-licenses-${{ matrix.php-version }}-${{ inputs.os }}.tar.gz",
-              "metadata": "php-metadata-${{ matrix.php-version }}-${{ inputs.os }}.json"
-            }
-          }' | jq . > php-latest-${{ inputs.os }}-${{ matrix.php-version }}.json
-
-          aws s3 cp php-latest-${{ inputs.os }}-${{ matrix.php-version }}.json \
-            s3://${{ secrets.R2_BUCKET_NAME }}/php-latest-${{ inputs.os }}-${{ matrix.php-version }}.json \
-            --endpoint-url ${{ secrets.R2_ENDPOINT }}
