@@ -158,8 +158,7 @@ jobs:
           fi
 
           # Collect checksums from all build jobs
-          CHECKSUMS_JSON='${{ toJSON(needs.build.outputs.checksums) }}'
-          echo "$CHECKSUMS_JSON" > checksums.json
+          echo '${{ toJSON(needs.build.outputs.checksums) }}' > checksums.json
 
           # Update metadata with build results
           python3 .github/scripts/update_metadata.py \
