@@ -112,21 +112,21 @@ jobs:
             s3://${{ secrets.R2_BUCKET_NAME }}/"$ARCHIVE_NAME" \
             --endpoint-url ${{ secrets.R2_ENDPOINT }}
 
-      # Save checksum to single consolidated artifact
+      # Save checksum with unique filename
       - name: "Save checksum"
         run: |
           # Load archive info
           source archive_info.txt
 
-          # Append to single checksums file
-          echo "${{ matrix.php-version }},${{ matrix.os }},$ARCHIVE_SHA512" >> checksums.txt
+          # Create checksum file with UNIQUE name per job
+          echo "${{ matrix.php-version }},${{ matrix.os }},$ARCHIVE_SHA512" > checksums-${{ matrix.php-version }}-${{ matrix.os }}.txt
 
       # Upload checksum artifact (one per version-os)
       - name: "Upload checksums"
         uses: actions/upload-artifact@v4
         with:
           name: checksum-${{ matrix.php-version }}-${{ matrix.os }}
-          path: checksums.txt
+          path: checksums-${{ matrix.php-version }}-${{ matrix.os }}.txt
           retention-days: 1
 
   update-metadata:
@@ -163,8 +163,8 @@ jobs:
 
           # Consolidate all downloaded checksum files
           ALL_CHECKSUMS=""
-          if ls checksums.txt 2>/dev/null; then
-            ALL_CHECKSUMS=$(cat checksums.txt 2>/dev/null | grep -v "^$" | tr '\n' '\n')
+          if ls checksums-*.txt 2>/dev/null; then
+            ALL_CHECKSUMS=$(cat checksums-*.txt 2>/dev/null | grep -v "^$")
           fi
 
           # Update metadata with build results
