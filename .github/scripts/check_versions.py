@@ -28,7 +28,7 @@ def main():
     for version_id, version_data in api_data['data'].items():
         version_name = version_data['name']
 
-        if not version_data['isEOLVersion'] and not version_data['isFutureVersion']:
+        if not version_data['isEOLVersion']:
             # Check if version needs building/rebuilding
             need_build = False
 
