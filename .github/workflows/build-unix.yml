@@ -94,7 +94,7 @@ jobs:
 
       - name: "Build PHP"
         run: |
-          ./spc build $EXTENSIONS --build-cli --build-fpm --with-config-file-scan-dir="$HOME/Library/Application Support/Fadogen/config/php/$(echo ${{ matrix.php-version }} | sed 's/\.//g' | cut -c1-2)/"
+          ./spc build $EXTENSIONS --build-cli --build-fpm -P .github/scripts/patch_fadogen_ini_scan.php
 
       # Create unified archive and upload to R2
       - name: "Create and Upload PHP archive to R2"
