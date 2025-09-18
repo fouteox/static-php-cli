@@ -129,12 +129,13 @@ def update_metadata(build_matrix_json, archive_checksums):
 
     # Parse archive checksums (format: version,os,sha512)
     checksums_map = {}
-    for line in archive_checksums.strip().split('\n'):
-        if line:
-            parts = line.split(',')
-            if len(parts) == 3:
-                version, os_name, sha512 = parts
-                checksums_map[f"{version}-{os_name}"] = sha512
+    if archive_checksums and archive_checksums.strip():
+        for line in archive_checksums.strip().split('\n'):
+            if line and line.strip():
+                parts = line.strip().split(',')
+                if len(parts) == 3:
+                    version, os_name, sha512 = parts
+                    checksums_map[f"{version}-{os_name}"] = sha512
 
     # Update timestamp
     metadata['last_sync'] = datetime.now(UTC).isoformat().replace('+00:00', 'Z')
