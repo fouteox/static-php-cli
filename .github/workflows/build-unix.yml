@@ -94,6 +94,7 @@ jobs:
 
       - name: "Build PHP"
         run: |
+          export SPC_PHP_VERSION_SHORT=$(echo ${{ matrix.php-version }} | sed 's/\.//g' | cut -c1-2)
           ./spc build $EXTENSIONS --build-cli --build-fpm -P .github/scripts/patch_fadogen_ini_scan.php
 
       # Create unified archive and upload to R2
