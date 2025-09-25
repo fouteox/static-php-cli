@@ -92,35 +92,46 @@ jobs:
           # Export extensions for next step
           echo "EXTENSIONS=$EXTENSIONS" >> $GITHUB_ENV
 
+      # Generate unique timestamp - SINGLE source of truth
+      - name: "Generate Build Timestamp"
+        id: timestamp
+        run: |
+          TIMESTAMP=$(date -u +"%Y%m%d%H%M%S")
+          echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
+          echo "Generated timestamp: $TIMESTAMP"
+
       - name: "Build PHP"
         run: |
           export SPC_PHP_VERSION_SHORT=$(echo ${{ matrix.php-version }} | sed 's/\.//g' | cut -c1-2)
           ./spc build $EXTENSIONS --build-cli --build-fpm -P .github/scripts/patch_fadogen_ini_scan.php
 
-      # Create unified archive and upload to R2
+      # Create unified archive and upload to R2 - ATOMIC
       - name: "Create and Upload PHP archive to R2"
         run: |
-          # Create tar.xz archive containing both CLI and FPM
+          # STRICT: Create archive with REQUIRED timestamp
           python3 .github/scripts/php_build_manager.py create-archive \
             --php-version ${{ matrix.php-version }} \
-            --os ${{ matrix.os }}
+            --os ${{ matrix.os }} \
+            --timestamp ${{ steps.timestamp.outputs.timestamp }}
 
           # Load archive info
           source archive_info.txt
+          echo "Archive created: $ARCHIVE_NAME with SHA512: $ARCHIVE_SHA512"
 
-          # Upload archive to R2
+          # ATOMIC: Upload archive with unique filename - no collision possible
           aws s3 cp "$ARCHIVE_NAME" \
             s3://${{ secrets.R2_BUCKET_NAME }}/"$ARCHIVE_NAME" \
             --endpoint-url ${{ secrets.R2_ENDPOINT }}
 
-      # Save checksum with unique filename
+      # Save checksum with filename - STRICT format
       - name: "Save checksum"
         run: |
           # Load archive info
           source archive_info.txt
 
-          # Create checksum file with UNIQUE name per job
-          echo "${{ matrix.php-version }},${{ matrix.os }},$ARCHIVE_SHA512" > checksums-${{ matrix.php-version }}-${{ matrix.os }}.txt
+          # STRICT: Create checksum file with ALL 4 required fields (version,os,sha512,filename)
+          echo "${{ matrix.php-version }},${{ matrix.os }},$ARCHIVE_SHA512,$ARCHIVE_NAME" > checksums-${{ matrix.php-version }}-${{ matrix.os }}.txt
+          echo "Checksum saved: ${{ matrix.php-version }},${{ matrix.os }},$ARCHIVE_SHA512,$ARCHIVE_NAME"
 
       # Upload checksum artifact (one per version-os)
       - name: "Upload checksums"
@@ -176,6 +187,34 @@ jobs:
           # Upload updated metadata.json to R2
           aws s3 cp metadata.json s3://${{ secrets.R2_BUCKET_NAME }}/metadata.json --endpoint-url ${{ secrets.R2_ENDPOINT }}
           echo "Uploaded metadata.json to R2"
+
+      # YAGNI: Simple cleanup - keep only last 3 versions per PHP version
+      - name: "Cleanup old binaries"
+        run: |
+          echo "Starting cleanup of old PHP binaries..."
+
+          # Cleanup for each PHP version in the build matrix
+          BUILD_MATRIX='${{ needs.check-and-sync.outputs.build-matrix }}'
+          echo "$BUILD_MATRIX" | jq -r '.include[].["php-version"]' | sort -u | while read php_version; do
+            echo "Cleaning up old binaries for PHP $php_version"
+
+            # List all files for this PHP version, sort by last modified, keep newest 3, delete the rest
+            aws s3api list-objects-v2 \
+              --bucket ${{ secrets.R2_BUCKET_NAME }} \
+              --prefix "php-$php_version-" \
+              --endpoint-url ${{ secrets.R2_ENDPOINT }} \
+              --query 'sort_by(Contents, &LastModified)[:-3].Key' \
+              --output text | \
+            while read -r file_key; do
+              if [ "$file_key" != "None" ] && [ -n "$file_key" ]; then
+                echo "Deleting old binary: $file_key"
+                aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/"$file_key" \
+                  --endpoint-url ${{ secrets.R2_ENDPOINT }} || echo "Failed to delete $file_key"
+              fi
+            done
+          done
+
+          echo "Cleanup completed"
 
   cleanup-eol:
     name: "Cleanup EOL versions"

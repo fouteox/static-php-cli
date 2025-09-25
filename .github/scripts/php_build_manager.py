@@ -31,6 +31,16 @@ def save_json(data, filepath):
         json.dump(data, f, indent=2)
 
 
+def generate_build_timestamp():
+    """Generate unique build timestamp - SINGLE source of truth for timestamps"""
+    return datetime.now(UTC).strftime("%Y%m%d%H%M%S")
+
+
+def get_archive_filename(php_version, os_name, timestamp):
+    """Generate filename with timestamp - ONLY way to generate filename"""
+    return f"php-{php_version}-{timestamp}-{os_name}.tar.xz"
+
+
 def calculate_sha512(filepath):
     """Calculate SHA512 hash of a file."""
     hash_sha512 = hashlib.sha512()
@@ -99,9 +109,13 @@ def check_versions():
         f.write(f'should-build={should_build}\n')
 
 
-def create_archive(php_version, os_name):
-    """Create tar.xz archive containing both CLI and FPM binaries."""
-    archive_name = f"php-{php_version}-{os_name}.tar.xz"
+def create_archive(php_version, os_name, timestamp):
+    """Create tar.xz archive containing both CLI and FPM binaries with timestamp."""
+    # STRICT: timestamp is REQUIRED - no legacy support
+    if not timestamp:
+        raise ValueError("Timestamp is required - no legacy support")
+
+    archive_name = get_archive_filename(php_version, os_name, timestamp)
 
     # Create tar.xz archive
     with tarfile.open(archive_name, 'w:xz') as tar:
@@ -123,18 +137,23 @@ def create_archive(php_version, os_name):
 
 
 def update_metadata(build_matrix_json, archive_checksums):
-    """Update metadata.json with build results."""
+    """Update metadata.json with build results - STRICT format validation."""
     metadata = load_json('metadata.json') if Path('metadata.json').exists() else {'last_sync': '', 'versions': {}}
     build_matrix = json.loads(build_matrix_json)
 
-    # Parse archive checksums (format: version,os,sha512)
+    # Parse archive checksums (STRICT format: version,os,sha512,filename)
     checksums_map = {}
     for line in archive_checksums.strip().split('\n'):
         if line:
             parts = line.split(',')
-            if len(parts) == 3:
-                version, os_name, sha512 = parts
-                checksums_map[f"{version}-{os_name}"] = sha512
+            if len(parts) != 4:  # STRICT: Must have all 4 fields
+                raise ValueError(f"Invalid checksum format - expected version,os,sha512,filename: {line}")
+
+            version, os_name, sha512, filename = parts
+            checksums_map[f"{version}-{os_name}"] = {
+                'sha512': sha512,
+                'filename': filename
+            }
 
     # Update timestamp
     metadata['last_sync'] = datetime.now(UTC).isoformat().replace('+00:00', 'Z')
@@ -146,8 +165,7 @@ def update_metadata(build_matrix_json, archive_checksums):
         checksum_key = f"{version_name}-{os_name}"
 
         if checksum_key not in checksums_map:
-            print(f"Warning: No checksum found for {checksum_key}")
-            continue
+            raise ValueError(f"No checksum found for {checksum_key} - build incomplete")
 
         # Initialize version if not exists
         if version_name not in metadata['versions']:
@@ -169,9 +187,11 @@ def update_metadata(build_matrix_json, archive_checksums):
         if not isinstance(existing_builds, dict):
             existing_builds = {}
 
-        # Create new build entry
+        # Create new build entry - ALWAYS include filename
+        checksum_data = checksums_map[checksum_key]
         new_build_entry = {
-            'sha512': checksums_map[checksum_key],
+            'filename': checksum_data['filename'],
+            'sha512': checksum_data['sha512'],
             'last_build': datetime.now(UTC).isoformat().replace('+00:00', 'Z')
         }
 
@@ -210,6 +230,7 @@ def main():
     archive_parser = subparsers.add_parser('create-archive', help='Create tar.xz archive with CLI and FPM')
     archive_parser.add_argument('--php-version', required=True, help='PHP version')
     archive_parser.add_argument('--os', required=True, help='OS name')
+    archive_parser.add_argument('--timestamp', required=True, help='Build timestamp (REQUIRED)')  # STRICT
 
     # update-metadata subcommand
     metadata_parser = subparsers.add_parser('update-metadata', help='Update metadata.json with build results')
@@ -225,7 +246,7 @@ def main():
     if args.command == 'check-versions':
         check_versions()
     elif args.command == 'create-archive':
-        create_archive(args.php_version, args.os)
+        create_archive(args.php_version, args.os, args.timestamp)  # STRICT: timestamp required
     elif args.command == 'update-metadata':
         update_metadata(args.build_matrix, args.archive_checksums)
     elif args.command == 'cleanup-eol':
