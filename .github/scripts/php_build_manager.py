@@ -29,9 +29,9 @@ def generate_build_timestamp():
     return datetime.now(UTC).strftime("%Y%m%d%H%M%S")
 
 
-def get_archive_filename(php_version, os_name, timestamp):
+def get_archive_filename(full_version, os_name, timestamp):
     """Generate filename with timestamp - ONLY way to generate filename"""
-    return f"php-{php_version}-{timestamp}-{os_name}.tar.xz"
+    return f"php-{full_version}-{timestamp}-{os_name}.tar.xz"
 
 
 def calculate_sha512(filepath):
@@ -82,24 +82,32 @@ def check_versions():
             print(f"Failed to fetch details for {version_branch}")
 
     # Process each cached version
-    for version_name, version_details in version_details_cache.items():
+    for full_version, version_details in version_details_cache.items():
+        # Extract major.minor version (e.g., "8.4" from "8.4.13")
+        version_parts = full_version.split('.')
+        if len(version_parts) >= 2:
+            major_minor = f"{version_parts[0]}.{version_parts[1]}"
+        else:
+            major_minor = full_version
+
         # Check if we need to build this version
         need_build = False
 
-        if version_name not in metadata['versions']:
+        if major_minor not in metadata['versions']:
             need_build = True
-            print(f"New version detected: {version_name}")
+            print(f"New version detected: {full_version} (metadata key: {major_minor})")
         else:
             api_release = version_details.get('date', '')
-            metadata_release = metadata['versions'][version_name].get('releaseDate', '')
+            metadata_release = metadata['versions'][major_minor].get('releaseDate', '')
             if api_release != metadata_release:
                 need_build = True
-                print(f"Updated version detected: {version_name}")
+                print(f"Updated version detected: {full_version} (metadata key: {major_minor})")
 
         if need_build:
             for os_name in all_os:
                 build_matrix.append({
-                    'php-version': version_name,
+                    'php-version': major_minor,
+                    'full-version': full_version,
                     'os': os_name,
                     'runs-on': os_runners[os_name],
                     'releaseDate': version_details.get('date', '')
@@ -180,9 +188,10 @@ def update_metadata(build_matrix_json, archive_checksums):
 
     # Process each build
     for build in build_matrix.get('include', []):
-        version_name = build['php-version']
+        major_minor = build['php-version']  # Format X.Y (e.g., "8.4")
+        full_version = build['full-version']  # Format X.Y.Z (e.g., "8.4.13")
         os_name = build['os']
-        checksum_key = f"{version_name}-{os_name}"
+        checksum_key = f"{full_version}-{os_name}"
 
         if checksum_key not in checksums_map:
             raise ValueError(f"No checksum found for {checksum_key} - build incomplete")
@@ -190,20 +199,20 @@ def update_metadata(build_matrix_json, archive_checksums):
         # Get release date from build matrix (no API calls needed)
         release_date = build.get('releaseDate', '')
 
-        # Initialize version if not exists
-        if version_name not in metadata['versions']:
-            metadata['versions'][version_name] = {
+        # Initialize version if not exists (using major.minor as key)
+        if major_minor not in metadata['versions']:
+            metadata['versions'][major_minor] = {
                 'releaseDate': release_date,
                 'builds': {}
             }
         else:
-            metadata['versions'][version_name]['releaseDate'] = release_date
+            metadata['versions'][major_minor]['releaseDate'] = release_date
             # Ensure builds is a dict
-            if 'builds' not in metadata['versions'][version_name]:
-                metadata['versions'][version_name]['builds'] = {}
+            if 'builds' not in metadata['versions'][major_minor]:
+                metadata['versions'][major_minor]['builds'] = {}
 
         # Update build info by creating new dict
-        version_data = metadata['versions'][version_name]
+        version_data = metadata['versions'][major_minor]
 
         # Get existing builds or create empty dict
         existing_builds = version_data.get('builds', {})

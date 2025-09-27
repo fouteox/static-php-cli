@@ -110,7 +110,7 @@ jobs:
         run: |
           # STRICT: Create archive with REQUIRED timestamp
           python3 .github/scripts/php_build_manager.py create-archive \
-            --php-version ${{ matrix.php-version }} \
+            --php-version ${{ matrix.full-version }} \
             --os ${{ matrix.os }} \
             --timestamp ${{ steps.timestamp.outputs.timestamp }}
 
@@ -130,15 +130,15 @@ jobs:
           source archive_info.txt
 
           # STRICT: Create checksum file with ALL 4 required fields (version,os,sha512,filename)
-          echo "${{ matrix.php-version }},${{ matrix.os }},$ARCHIVE_SHA512,$ARCHIVE_NAME" > checksums-${{ matrix.php-version }}-${{ matrix.os }}.txt
-          echo "Checksum saved: ${{ matrix.php-version }},${{ matrix.os }},$ARCHIVE_SHA512,$ARCHIVE_NAME"
+          echo "${{ matrix.full-version }},${{ matrix.os }},$ARCHIVE_SHA512,$ARCHIVE_NAME" > checksums-${{ matrix.full-version }}-${{ matrix.os }}.txt
+          echo "Checksum saved: ${{ matrix.full-version }},${{ matrix.os }},$ARCHIVE_SHA512,$ARCHIVE_NAME"
 
       # Upload checksum artifact (one per version-os)
       - name: "Upload checksums"
         uses: actions/upload-artifact@v4
         with:
-          name: checksum-${{ matrix.php-version }}-${{ matrix.os }}
-          path: checksums-${{ matrix.php-version }}-${{ matrix.os }}.txt
+          name: checksum-${{ matrix.full-version }}-${{ matrix.os }}
+          path: checksums-${{ matrix.full-version }}-${{ matrix.os }}.txt
           retention-days: 1
 
   update-metadata:
