@@ -35,9 +35,9 @@ jobs:
             echo "Created empty metadata.json"
           fi
 
-          # Fetch PHP.watch API
-          echo "Fetching PHP.watch API..."
-          curl -fsSL https://php.watch/api/v1/versions > api_response.json
+          # Fetch PHP.net API
+          echo "Fetching PHP.net API..."
+          curl -fsSL https://www.php.net/releases/index.php?json > api_response.json
 
           # Run check versions script
           python3 .github/scripts/php_build_manager.py check-versions

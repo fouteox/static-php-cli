@@ -8,16 +8,9 @@ import json
 import argparse
 import hashlib
 import tarfile
+import subprocess
 from datetime import datetime, UTC
 from pathlib import Path
-
-
-VERSION_FIELDS = [
-    'versionId', 'releaseDate', 'activeSupportEndDate',
-    'eolDate', 'isEOLVersion', 'isSecureVersion',
-    'isLatestVersion', 'isFutureVersion', 'isNextVersion'
-]
-
 
 def load_json(filepath):
     """Load JSON file."""
@@ -50,6 +43,15 @@ def calculate_sha512(filepath):
     return hash_sha512.hexdigest()
 
 
+def fetch_version_details(version):
+    """Fetch detailed version info from PHP.net API."""
+    url = f"https://www.php.net/releases/index.php?json&version={version}"
+    result = subprocess.run(['curl', '-fsSL', url], capture_output=True, text=True)
+    if result.returncode == 0:
+        return json.loads(result.stdout)
+    return None
+
+
 def check_versions():
     """Check PHP versions and generate build matrix."""
     metadata = load_json('metadata.json')
@@ -61,37 +63,55 @@ def check_versions():
     build_matrix = []
     eol_versions = []
 
-    # Check each non-EOL version from API
-    for version_id, version_data in api_data['data'].items():
-        version_name = version_data['name']
+    # Get supported versions from the latest PHP branch (usually "8")
+    supported_versions = []
+    if "8" in api_data:
+        supported_versions = api_data["8"].get("supported_versions", [])
 
-        if not version_data['isEOLVersion'] and not version_data['isFutureVersion']:
-            need_build = False
+    # Cache all version details with single API calls
+    version_details_cache = {}
+    print("Fetching version details for all supported versions...")
+    for version_branch in supported_versions:
+        version_details = fetch_version_details(version_branch)
+        if version_details:
+            version_name = version_details.get('version')
+            if version_name:
+                version_details_cache[version_name] = version_details
+                print(f"Cached details for {version_name}")
+        else:
+            print(f"Failed to fetch details for {version_branch}")
 
-            if version_name not in metadata['versions']:
+    # Process each cached version
+    for version_name, version_details in version_details_cache.items():
+        # Check if we need to build this version
+        need_build = False
+
+        if version_name not in metadata['versions']:
+            need_build = True
+            print(f"New version detected: {version_name}")
+        else:
+            api_release = version_details.get('date', '')
+            metadata_release = metadata['versions'][version_name].get('releaseDate', '')
+            if api_release != metadata_release:
                 need_build = True
-                print(f"New version detected: {version_name}")
-            else:
-                api_release = version_data['releaseDate']
-                metadata_release = metadata['versions'][version_name].get('releaseDate', '')
-                if api_release > metadata_release:
-                    need_build = True
-                    print(f"Updated version detected: {version_name}")
+                print(f"Updated version detected: {version_name}")
 
-            if need_build:
-                for os_name in all_os:
-                    build_matrix.append({
-                        'php-version': version_name,
-                        'os': os_name,
-                        'runs-on': os_runners[os_name],
-                        **{field: version_data[field] for field in VERSION_FIELDS}
-                    })
+        if need_build:
+            for os_name in all_os:
+                build_matrix.append({
+                    'php-version': version_name,
+                    'os': os_name,
+                    'runs-on': os_runners[os_name],
+                    'releaseDate': version_details.get('date', '')
+                })
 
-    # Check for EOL versions
+    # Check for EOL versions in metadata
     for version_name in metadata['versions']:
-        if version_name in [v['name'] for v in api_data['data'].values()]:
-            version_data = next(v for v in api_data['data'].values() if v['name'] == version_name)
-            if version_data['isEOLVersion']:
+        # Extract major.minor from version (e.g., "8.3" from "8.3.26")
+        version_parts = version_name.split('.')
+        if len(version_parts) >= 2:
+            major_minor = f"{version_parts[0]}.{version_parts[1]}"
+            if major_minor not in supported_versions:
                 eol_versions.append(version_name)
                 print(f"EOL version detected: {version_name}")
 
@@ -167,14 +187,17 @@ def update_metadata(build_matrix_json, archive_checksums):
         if checksum_key not in checksums_map:
             raise ValueError(f"No checksum found for {checksum_key} - build incomplete")
 
+        # Get release date from build matrix (no API calls needed)
+        release_date = build.get('releaseDate', '')
+
         # Initialize version if not exists
         if version_name not in metadata['versions']:
             metadata['versions'][version_name] = {
-                **{field: build[field] for field in VERSION_FIELDS},
+                'releaseDate': release_date,
                 'builds': {}
             }
         else:
-            metadata['versions'][version_name].update({field: build[field] for field in VERSION_FIELDS})
+            metadata['versions'][version_name]['releaseDate'] = release_date
             # Ensure builds is a dict
             if 'builds' not in metadata['versions'][version_name]:
                 metadata['versions'][version_name]['builds'] = {}
@@ -230,7 +253,7 @@ def main():
     archive_parser = subparsers.add_parser('create-archive', help='Create tar.xz archive with CLI and FPM')
     archive_parser.add_argument('--php-version', required=True, help='PHP version')
     archive_parser.add_argument('--os', required=True, help='OS name')
-    archive_parser.add_argument('--timestamp', required=True, help='Build timestamp (REQUIRED)')  # STRICT
+    archive_parser.add_argument('--timestamp', required=True, help='Build timestamp (REQUIRED)')
 
     # update-metadata subcommand
     metadata_parser = subparsers.add_parser('update-metadata', help='Update metadata.json with build results')
