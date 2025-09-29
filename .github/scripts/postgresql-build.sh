@@ -142,7 +142,7 @@ FINAL_PREFIX="/Users/Shared/Fadogen/services/postgresql/$MAJOR_VERSION"
   PKG_CONFIG_PATH="/opt/homebrew/opt/icu4c/lib/pkgconfig"
 
 echo "[INFO] Compilation PostgreSQL..."
-make -j
+make -j1
 
 echo "[INFO] Installation temporaire..."
 make install DESTDIR="$STAGING_DIR"

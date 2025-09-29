@@ -154,7 +154,7 @@ mkdir -p "$BUILD_DIR/etc"
 
 echo "[INFO] Compilation Redis..."
 # Build dans le sous-répertoire comme spécifié dans la doc officielle
-make -j "$(nproc)" all OS=macos
+make all OS=macos
 
 echo "[INFO] Installation temporaire..."
 make install PREFIX="$BUILD_DIR" OS=macos

@@ -143,7 +143,7 @@ cmake ../. \
   -DWITHOUT_DYNAMIC_PLUGINS=ON
 
 echo "[INFO] Compilation MariaDB..."
-cmake --build . --parallel
+cmake --build .
 
 echo "[INFO] Installation temporaire..."
 make install DESTDIR="$STAGING_DIR"

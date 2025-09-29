@@ -152,7 +152,7 @@ cmake ../. \
   -DINSTALL_MYSQLTESTDIR=""
 
 echo "[INFO] Compilation MySQL..."
-cmake --build . --parallel
+cmake --build .
 
 echo "[INFO] Installation temporaire..."
 make install DESTDIR="$STAGING_DIR"
