@@ -14,16 +14,13 @@ set -euo pipefail
 # Services à vérifier
 SERVICES="mariadb mysql postgresql redis"
 
-# Configuration des versions majeures par service
+# Source la configuration centralisée des services
+source "$(dirname "$0")/.github/config/services-config.sh"
+
+# Configuration des versions majeures par service (délègue au config central)
 get_service_versions() {
     local service="$1"
-
-    case "$service" in
-        "mariadb") echo "10 11 12" ;;
-        "mysql") echo "8 9" ;;
-        "postgresql") echo "14 15 16 17 18" ;;
-        "redis") echo "7 8" ;;
-    esac
+    get_supported_versions "$service"
 }
 
 # ================================

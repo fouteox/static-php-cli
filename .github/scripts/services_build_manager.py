@@ -12,13 +12,29 @@ import subprocess
 from datetime import datetime, UTC
 from pathlib import Path
 
-# Services configuration
-SERVICES_CONFIG = {
-    'mariadb': ['10', '11', '12'],
-    'mysql': ['8', '9'],
-    'postgresql': ['14', '15', '16', '17', '18'],
-    'redis': ['7', '8']
-}
+def load_services_config():
+    """Load services configuration from central config file."""
+    import os
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(script_dir, '..', 'config', 'services-config.sh')
+
+    services_config = {}
+    available_services = ['mariadb', 'mysql', 'postgresql', 'redis']
+
+    for service in available_services:
+        result = subprocess.run([
+            'bash', '-c',
+            f'source "{config_path}" && get_supported_versions "{service}"'
+        ], capture_output=True, text=True)
+
+        if result.returncode == 0 and result.stdout.strip():
+            versions = result.stdout.strip().split()
+            services_config[service] = versions
+
+    return services_config
+
+# Services configuration (loaded dynamically from central config)
+SERVICES_CONFIG = load_services_config()
 
 def load_json(filepath):
     """Load JSON file."""

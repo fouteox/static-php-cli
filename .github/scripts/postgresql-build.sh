@@ -13,10 +13,15 @@ fi
 
 MAJOR_VERSION="$1"
 
-# Validation de la version majeure
-if [[ ! "$MAJOR_VERSION" =~ ^(14|15|16|17)$ ]]; then
+# Source la configuration centralisée
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../config/services-config.sh"
+
+# Validation dynamique de la version majeure
+SUPPORTED_VERSIONS=$(get_supported_versions "postgresql")
+if ! is_version_supported "postgresql" "$MAJOR_VERSION"; then
     echo "Erreur: Version non supportée '$MAJOR_VERSION'"
-    echo "Versions supportées: 14, 15, 16, 17"
+    echo "Versions supportées: $SUPPORTED_VERSIONS"
     exit 1
 fi
 
