@@ -13,32 +13,34 @@ jobs:
     outputs:
       build-matrix: ${{ steps.versions.outputs.matrix }}
     steps:
-      - name: "Fetch versions from endoflife.date"
+      - name: "Checkout"
+        uses: actions/checkout@v5
+
+      - name: "Fetch versions using check-services-versions.sh"
         id: versions
         run: |
+          # Source the centralized config
+          source .github/config/services-config.sh
+
           # Fetch MariaDB releases from endoflife.date API
           response=$(curl -s "https://endoflife.date/api/mariadb.json")
 
-          # Extract latest versions for major 10, 11, 12
-          version_10=$(echo "$response" | jq -r '[.[] | select(.cycle | startswith("10.")) | select(.eol == false or (.eol | type) == "string")] | sort_by(.releaseDate) | reverse | .[0].latest')
-          version_11=$(echo "$response" | jq -r '[.[] | select(.cycle | startswith("11.")) | select(.eol == false or (.eol | type) == "string")] | sort_by(.releaseDate) | reverse | .[0].latest')
-          version_12=$(echo "$response" | jq -r '[.[] | select(.cycle | startswith("12.")) | select(.eol == false or (.eol | type) == "string")] | sort_by(.releaseDate) | reverse | .[0].latest')
+          # Get supported major versions from config
+          major_versions=$(get_supported_versions "mariadb")
 
-          echo "Found versions:"
-          echo "  MariaDB 10: $version_10"
-          echo "  MariaDB 11: $version_11"
-          echo "  MariaDB 12: $version_12"
+          # Extract latest version for each major version
+          versions_array=()
+          for major in $major_versions; do
+            version=$(echo "$response" | jq -r "[.[] | select(.cycle | startswith(\"$major.\")) | select(.eol == false or (.eol | type) == \"string\")] | sort_by(.releaseDate) | reverse | .[0].latest")
+            if [[ "$version" != "null" && -n "$version" ]]; then
+              versions_array+=("$version")
+              echo "  MariaDB $major: $version"
+            fi
+          done
 
-          # Build matrix JSON
-          matrix=$(jq -n \
-            --arg v10 "$version_10" \
-            --arg v11 "$version_11" \
-            --arg v12 "$version_12" \
-            '{include: [
-              {version: $v10},
-              {version: $v11},
-              {version: $v12}
-            ]}')
+          # Build matrix JSON (compact, single line)
+          matrix_items=$(printf '{version: "%s"},' "${versions_array[@]}" | sed 's/,$//')
+          matrix=$(echo "{\"include\": [$matrix_items]}" | jq -c)
 
           echo "matrix=$matrix" >> $GITHUB_OUTPUT
           echo "Generated matrix: $matrix"
