@@ -92,7 +92,7 @@ cmake --build .
 
 echo "[INFO] Creating portable tarball..."
 cpack -G TXZ
-mv ./MariaDB-*.tar.xz "$WORKDIR/$ARCHIVE"
+mv ./mariadb-*.tar.xz "$WORKDIR/$ARCHIVE"
 
 echo "[SUCCESS] Created: $ARCHIVE ($(du -sh "$WORKDIR/$ARCHIVE" | cut -f1))"
 echo "[INFO] Archive location: $WORKDIR/$ARCHIVE"
