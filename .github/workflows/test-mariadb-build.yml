@@ -1,0 +1,114 @@
+name: "Test - MariaDB Build"
+
+on:
+  workflow_dispatch:
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  fetch-versions:
+    name: "Fetch MariaDB versions"
+    runs-on: ubuntu-latest
+    outputs:
+      build-matrix: ${{ steps.versions.outputs.matrix }}
+    steps:
+      - name: "Fetch versions from endoflife.date"
+        id: versions
+        run: |
+          # Fetch MariaDB releases from endoflife.date API
+          response=$(curl -s "https://endoflife.date/api/mariadb.json")
+
+          # Extract latest versions for major 10, 11, 12
+          version_10=$(echo "$response" | jq -r '[.[] | select(.cycle | startswith("10.")) | select(.eol == false or (.eol | type) == "string")] | sort_by(.releaseDate) | reverse | .[0].latest')
+          version_11=$(echo "$response" | jq -r '[.[] | select(.cycle | startswith("11.")) | select(.eol == false or (.eol | type) == "string")] | sort_by(.releaseDate) | reverse | .[0].latest')
+          version_12=$(echo "$response" | jq -r '[.[] | select(.cycle | startswith("12.")) | select(.eol == false or (.eol | type) == "string")] | sort_by(.releaseDate) | reverse | .[0].latest')
+
+          echo "Found versions:"
+          echo "  MariaDB 10: $version_10"
+          echo "  MariaDB 11: $version_11"
+          echo "  MariaDB 12: $version_12"
+
+          # Build matrix JSON
+          matrix=$(jq -n \
+            --arg v10 "$version_10" \
+            --arg v11 "$version_11" \
+            --arg v12 "$version_12" \
+            '{include: [
+              {version: $v10},
+              {version: $v11},
+              {version: $v12}
+            ]}')
+
+          echo "matrix=$matrix" >> $GITHUB_OUTPUT
+          echo "Generated matrix: $matrix"
+
+  build-mariadb:
+    name: "Build MariaDB ${{ matrix.version }}"
+    runs-on: macos-latest
+    needs: [fetch-versions]
+    timeout-minutes: 240
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.fetch-versions.outputs.build-matrix) }}
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v5
+
+      - name: "Setup dependencies"
+        run: |
+          brew install bison pkg-config ninja
+
+      - name: "Generate Build Timestamp"
+        id: timestamp
+        run: |
+          TIMESTAMP=$(date -u +"%Y%m%d%H%M%S")
+          echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
+          echo "Generated timestamp: $TIMESTAMP"
+
+      - name: "Build MariaDB"
+        run: |
+          echo "[INFO] Building MariaDB version ${{ matrix.version }}"
+          .github/scripts/mariadb-build.sh ${{ matrix.version }}
+
+      - name: "Upload archive to R2"
+        run: |
+          VERSION="${{ matrix.version }}"
+          ARCH=$(uname -m)
+          WORKDIR="$HOME/fadogen-build/mariadb-$VERSION"
+          ORIGINAL_ARCHIVE="$WORKDIR/mariadb-$VERSION-macos-$ARCH.tar.xz"
+
+          # Verify archive exists
+          if [[ ! -f "$ORIGINAL_ARCHIVE" ]]; then
+            echo "[ERROR] Archive not found: $ORIGINAL_ARCHIVE"
+            exit 1
+          fi
+
+          # Create unique archive name with timestamp
+          TIMESTAMP="${{ steps.timestamp.outputs.timestamp }}"
+          ARCHIVE_NAME="mariadb-$VERSION-macos-$ARCH-$TIMESTAMP.tar.xz"
+
+          # Copy with new name
+          cp "$ORIGINAL_ARCHIVE" "$ARCHIVE_NAME"
+
+          # Calculate SHA512
+          if command -v sha512sum >/dev/null 2>&1; then
+            SHA512=$(sha512sum "$ARCHIVE_NAME" | awk '{print $1}')
+          else
+            SHA512=$(shasum -a 512 "$ARCHIVE_NAME" | awk '{print $1}')
+          fi
+
+          echo "[INFO] Archive: $ARCHIVE_NAME"
+          echo "[INFO] SHA512: $SHA512"
+          echo "[INFO] Size: $(du -h "$ARCHIVE_NAME" | cut -f1)"
+
+          # Upload to R2
+          aws s3 cp "$ARCHIVE_NAME" \
+            s3://${{ secrets.R2_BUCKET_NAME }}/"$ARCHIVE_NAME" \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }}
+
+          echo "[SUCCESS] Uploaded $ARCHIVE_NAME to R2"

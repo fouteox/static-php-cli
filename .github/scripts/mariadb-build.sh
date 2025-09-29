@@ -1,206 +1,99 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ---------------------------
-# VÉRIFICATION DES PARAMÈTRES
-# ---------------------------
-if [ $# -ne 1 ]; then
-    echo "Usage: $0 <version_majeure>"
-    echo "Exemples: $0 10, $0 11, $0 12"
-    echo "Versions supportées: 10 (LTS), 11 (LTS), 12 (Rolling)"
+# Usage: ./mariadb-build.sh 12.0.2
+VERSION="$1"
+
+# Validate version parameter
+if [[ -z "$VERSION" ]]; then
+    echo "[ERROR] Version parameter required"
+    echo "[USAGE] $0 <version>  (e.g., $0 12.0.2)"
     exit 1
 fi
 
-MAJOR_VERSION="$1"
-
-# Source la configuration centralisée
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/../config/services-config.sh"
-
-# Validation dynamique de la version majeure
-SUPPORTED_VERSIONS=$(get_supported_versions "mariadb")
-if ! is_version_supported "mariadb" "$MAJOR_VERSION"; then
-    echo "Erreur: Version non supportée '$MAJOR_VERSION'"
-    echo "Versions supportées: $SUPPORTED_VERSIONS"
+# Validate version format (semantic versioning)
+if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "[ERROR] Invalid version format: $VERSION"
+    echo "[USAGE] Use semantic versioning format: X.Y.Z (e.g., 12.0.2)"
     exit 1
 fi
 
-# ---------------------------
-# CONFIGURATION MARIADB
-# ---------------------------
-# Workspace isolé par version majeure
-WORKDIR="$HOME/fadogen-build/build-mariadb-$MAJOR_VERSION"
-MARIADB_REPO="https://github.com/MariaDB/server.git"
+WORKDIR="$HOME/fadogen-build/mariadb-$VERSION"
+TEMP_DIR="/tmp/mariadb-$$"
 
-# Répertoires temporaires isolés par processus (évite race conditions)
-STAGING_DIR="/tmp/mariadb-staging-$$"
-INSTALL_DIR="/tmp/mariadb-install-$$"
-
-# Nettoyage automatique en cas d'interruption
-trap 'rm -rf $STAGING_DIR $INSTALL_DIR' EXIT
-
-# ---------------------------
-# FONCTIONS UTILITAIRES (DRY depuis certutil-build.sh)
-# ---------------------------
-function check_command() {
-    command -v "$1" >/dev/null 2>&1 || { echo >&2 "Erreur : $1 n'est pas installé."; exit 1; }
+# Cleanup function
+cleanup() {
+    rm -rf "$TEMP_DIR"
 }
 
-function get_latest_version() {
-    local major_version="$1"
-    echo "[INFO] Récupération de la dernière version MariaDB $major_version.x..." >&2
+# Setup trap for cleanup
+trap cleanup EXIT
 
-    local latest_tag
-    latest_tag=$(git ls-remote --tags "$MARIADB_REPO" | \
-        grep -E "mariadb-${major_version}\.[0-9]+\.[0-9]+$" | \
-        sed 's/.*refs\/tags\///' | \
-        sort -V | \
-        tail -1)
-
-    if [ -z "$latest_tag" ]; then
-        echo "Erreur : Aucune version trouvée pour MariaDB $major_version.x" >&2
-        exit 1
-    fi
-
-    echo "$latest_tag"
-}
-
-# ---------------------------
-# 1. Détermination de la version (automatique ou override)
-# ---------------------------
-if [[ -n "${FULL_VERSION:-}" ]]; then
-    # Version fournie par variable d'environnement (workflow CI)
-    MARIADB_VERSION="$FULL_VERSION"
-    MARIADB_BRANCH="mariadb-$FULL_VERSION"
-    echo "[INFO] Version fournie par FULL_VERSION: $MARIADB_VERSION"
-else
-    # Récupération automatique de la dernière version de la branche demandée
-    MARIADB_BRANCH=$(get_latest_version "$MAJOR_VERSION")
-    MARIADB_VERSION=$(echo "$MARIADB_BRANCH" | sed 's/mariadb-//' | sed 's/\.[0-9]*$//')
-    echo "[INFO] Version détectée automatiquement: $MARIADB_VERSION"
-fi
-
-echo "[INFO] Version sélectionnée: $MARIADB_BRANCH"
-echo "[INFO] Version complète: $MARIADB_VERSION"
-
-# ---------------------------
-# 2. Vérifications préliminaires
-# ---------------------------
-check_command git
-check_command brew
-
-echo "[INFO] Installation des dépendances via Homebrew..."
-brew install cmake ninja bison || true
-
-# ---------------------------
-# 3. Préparer workspace isolé par version
-# ---------------------------
-echo "[INFO] Préparation du workspace isolé pour MariaDB $MAJOR_VERSION.x..."
-echo "[INFO] Workspace: $WORKDIR"
-
-# Créer le workspace s'il n'existe pas
-mkdir -p "$WORKDIR"
+# Setup workspace
+mkdir -p "$WORKDIR" "$TEMP_DIR"
 cd "$WORKDIR"
 
-# Vérifier si une archive existe déjà pour cette version exacte
-ARCHIVE_NAME="mariadb-$MARIADB_VERSION-macos-aarch64.tar.xz"
-if [ -f "$ARCHIVE_NAME" ]; then
-    echo "[INFO] Archive existante trouvée: $ARCHIVE_NAME"
-    echo "[INFO] Poursuite du build (écrasement de l'archive)..."
-fi
+# Download and compile MariaDB from source
+REPO_URL="https://github.com/MariaDB/server.git"
+SOURCE_DIR="mariadb-server"
+ARCHIVE="mariadb-$VERSION-macos-$(uname -m).tar.xz"
 
-# Nettoyer seulement les fichiers temporaires de build
-rm -rf server
-rm -rf "$STAGING_DIR"
+echo "[INFO] Downloading MariaDB $VERSION source code..."
+rm -rf "${WORKDIR:?}/$SOURCE_DIR"
+git clone --branch "mariadb-$VERSION" --depth 1 --recursive "$REPO_URL" "$WORKDIR/$SOURCE_DIR"
 
-echo "[INFO] Configuration MariaDB build script"
-echo "[INFO] Target: MariaDB $MARIADB_VERSION for macOS ARM64"
-echo "[INFO] Workspace: $WORKDIR"
+echo "[INFO] Detecting macOS SDK..."
+MACOS_SDK=$(xcrun --show-sdk-path)
+echo "[INFO] Using SDK: $MACOS_SDK"
 
-echo "[INFO] Clonage de MariaDB $MARIADB_VERSION..."
-git clone --branch "$MARIADB_BRANCH" --depth 1 "$MARIADB_REPO" server
-cd server
-echo "[INFO] MariaDB source clonée avec succès"
+echo "[INFO] Building MariaDB $VERSION..."
+cd "$WORKDIR/$SOURCE_DIR"
 
-# ---------------------------
-# 4. Build MariaDB (ARM64 Release)
-# ---------------------------
-echo "[INFO] Création du répertoire de build (out-of-tree recommandé)..."
-mkdir build-mariadb-release
-cd build-mariadb-release
+rm -rf build
+mkdir build && cd build
 
-echo "[INFO] Configuration CMAKE pour macOS ARM64..."
-cmake ../. \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_OSX_ARCHITECTURES=arm64 \
-  -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
-  -DBISON_EXECUTABLE=/opt/homebrew/opt/bison/bin/bison \
-  -DWITH_EMBEDDED_SERVER=OFF \
-  -DPLUGIN_MROONGA=NO \
-  -DPLUGIN_SPIDER=NO \
-  -DPLUGIN_OQGRAPH=NO \
-  -DPLUGIN_ROCKSDB=NO \
-  -DWITHOUT_DYNAMIC_PLUGINS=ON
+# Common flags for both C and C++ (optimized for portable binaries)
+COMMON_FLAGS="-w -fno-asynchronous-unwind-tables -fno-common -arch $(uname -m)"
 
-echo "[INFO] Compilation MariaDB..."
+echo "[INFO] Configuring MariaDB with CMake..."
+cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_COMPILER=clang \
+    -DCMAKE_CXX_COMPILER=clang++ \
+    -DCMAKE_C_FLAGS="${COMMON_FLAGS}" \
+    -DCMAKE_CXX_FLAGS="${COMMON_FLAGS}" \
+    -DCMAKE_OSX_SYSROOT="${MACOS_SDK}" \
+    -DBISON_EXECUTABLE=/opt/homebrew/opt/bison/bin/bison \
+    -DINSTALL_LAYOUT=STANDALONE \
+    -DCPACK_MONOLITHIC_INSTALL=1 \
+    -DWITH_SSL=bundled \
+    -DWITH_ZLIB=bundled \
+    -DCONC_WITH_EXTERNAL_ZLIB=OFF \
+    -DWITH_UNIT_TESTS=OFF \
+    -DWITH_DEBUG=0 \
+    -DMYSQL_MAINTAINER_MODE=OFF \
+    -DWITHOUT_TOKUDB=1 \
+    -DWITHOUT_ROCKSDB=1 \
+    -DWITHOUT_MROONGA=1 \
+    -DPLUGIN_TOKUDB=NO \
+    -DPLUGIN_ROCKSDB=NO \
+    -DPLUGIN_MROONGA=NO \
+    -DPLUGIN_PROVIDER_LZO=NO \
+    -DPLUGIN_PROVIDER_SNAPPY=NO \
+    -DPLUGIN_PROVIDER_LZ4=NO \
+    -DPLUGIN_PROVIDER_ZSTD=NO \
+    -DCONNECT_WITH_MONGO=OFF \
+    -DCONNECT_WITH_BSON=OFF \
+    -DCONNECT_WITH_ODBC=OFF \
+    -G Ninja
+
+echo "[INFO] Compiling MariaDB (this may take a while)..."
 cmake --build .
 
-echo "[INFO] Installation temporaire..."
-make install DESTDIR="$STAGING_DIR"
+echo "[INFO] Creating portable tarball..."
+cpack -G TXZ
+mv ./MariaDB-*.tar.xz "$WORKDIR/$ARCHIVE"
 
-echo "[INFO] Build MariaDB terminé avec succès"
-
-# ---------------------------
-# 5. Extraction des binaires MariaDB (pattern certutil-build.sh)
-# ---------------------------
-MARIADBD_SRC="$STAGING_DIR/$INSTALL_DIR/bin/mariadbd"
-MARIADB_CLIENT_SRC="$STAGING_DIR/$INSTALL_DIR/bin/mariadb"
-
-if [ ! -f "$MARIADBD_SRC" ]; then
-    echo "Erreur : mariadbd non trouvé après compilation."
-    exit 1
-fi
-
-if [ ! -f "$MARIADB_CLIENT_SRC" ]; then
-    echo "Erreur : mariadb client non trouvé après compilation."
-    exit 1
-fi
-
-echo "[INFO] Création de la structure temporaire pour l'archive..."
-PACKAGE_DIR="mariadb-package"
-rm -rf "$PACKAGE_DIR"
-mkdir -p "$PACKAGE_DIR"
-
-echo "[INFO] Copie COMPLÈTE de l'installation MariaDB..."
-cp -r "$STAGING_DIR/$INSTALL_DIR"/* "$PACKAGE_DIR/"
-
-echo "[INFO] Vérification de la structure de l'archive..."
-ls -la "$PACKAGE_DIR/"
-echo "[INFO] Taille de l'installation:"
-du -sh "$PACKAGE_DIR"
-
-echo "[INFO] Déplacement vers le répertoire fadogen-build..."
-cd ../..
-
-echo "[INFO] Création de l'archive tar..."
-tar -cJf "$ARCHIVE_NAME" -C "server/build-mariadb-release/$PACKAGE_DIR" .
-
-echo "[INFO] Nettoyage..."
-rm -rf "server/build-mariadb-release/$PACKAGE_DIR"
-# Note: $STAGING_DIR et $INSTALL_DIR sont nettoyés automatiquement par le trap EXIT
-
-# ---------------------------
-# 6. Vérification
-# ---------------------------
-echo "[INFO] Vérification de l'archive..."
-ls -la "$ARCHIVE_NAME"
-
-echo "[SUCCESS] Archive MariaDB portable créée: $(pwd)/$ARCHIVE_NAME"
-echo "[INFO] Workspace préservé pour builds futurs: $WORKDIR"
-echo "[INFO] Pour builder d'autres versions: ./mariadb-build.sh 10|11|12"
-
-# ---------------------------
-# 7. Nettoyage optionnel
-# ---------------------------
-# echo "[INFO] Nettoyage du workspace..."
-# rm -rf "$WORKDIR"
+echo "[SUCCESS] Created: $ARCHIVE ($(du -sh "$WORKDIR/$ARCHIVE" | cut -f1))"
+echo "[INFO] Archive location: $WORKDIR/$ARCHIVE"
+echo "[INFO] MariaDB $VERSION ready for distribution"
