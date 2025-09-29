@@ -39,7 +39,7 @@ jobs:
           done
 
           # Build matrix JSON (compact, single line)
-          matrix_items=$(printf '{version: "%s"},' "${versions_array[@]}" | sed 's/,$//')
+          matrix_items=$(printf '{"version": "%s"},' "${versions_array[@]}" | sed 's/,$//')
           matrix=$(echo "{\"include\": [$matrix_items]}" | jq -c)
 
           echo "matrix=$matrix" >> $GITHUB_OUTPUT
