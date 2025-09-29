@@ -37,7 +37,7 @@ STAGING_DIR="/tmp/mysql-staging-$$"
 INSTALL_DIR="/tmp/mysql-install-$$"
 
 # Nettoyage automatique en cas d'interruption
-trap "rm -rf $STAGING_DIR $INSTALL_DIR" EXIT
+trap 'rm -rf $STAGING_DIR $INSTALL_DIR' EXIT
 
 # ---------------------------
 # FONCTIONS UTILITAIRES (DRY depuis certutil-build.sh)
@@ -50,7 +50,8 @@ function get_latest_version() {
     local major_version="$1"
     echo "[INFO] Récupération de la dernière version MySQL $major_version.x..." >&2
 
-    local latest_tag=$(git ls-remote --tags "$MYSQL_REPO" | \
+    local latest_tag
+    latest_tag=$(git ls-remote --tags "$MYSQL_REPO" | \
         grep -E "mysql-${major_version}\\.[0-9]+\\.[0-9]+$" | \
         sed 's/.*refs\/tags\///' | \
         sort -V | \
@@ -144,7 +145,7 @@ cmake ../. \
   -DCMAKE_OSX_ARCHITECTURES=arm64 \
   -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
   -DBISON_EXECUTABLE=/opt/homebrew/opt/bison/bin/bison \
-  $BOOST_OPTIONS \
+  "$BOOST_OPTIONS" \
   -DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl \
   -DWITH_FIDO=none \
   -DWITH_UNIT_TESTS=OFF \

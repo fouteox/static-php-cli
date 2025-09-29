@@ -37,7 +37,7 @@ STAGING_DIR="/tmp/postgresql-staging-$$"
 INSTALL_DIR="/tmp/postgresql-install-$$"
 
 # Nettoyage automatique en cas d'interruption
-trap "rm -rf $STAGING_DIR $INSTALL_DIR" EXIT
+trap 'rm -rf "$STAGING_DIR" "$INSTALL_DIR"' EXIT
 
 # ---------------------------
 # FONCTIONS UTILITAIRES (DRY depuis certutil-build.sh)
@@ -50,7 +50,9 @@ function get_latest_version() {
     local major_version="$1"
     echo "[INFO] Récupération de la dernière version PostgreSQL $major_version.x..." >&2
 
-    local latest_tag=$(git ls-remote --tags "$POSTGRESQL_REPO" | \
+    local latest_tag
+    local latest_tag
+    latest_tag=$(git ls-remote --tags "$POSTGRESQL_REPO" | \
         grep -E "REL_${major_version}_[0-9]+$" | \
         sed 's/.*refs\/tags\///' | \
         sort -V | \
@@ -71,7 +73,7 @@ if [[ -n "${FULL_VERSION:-}" ]]; then
     # Version fournie par variable d'environnement (workflow CI)
     POSTGRESQL_VERSION="$FULL_VERSION"
     # Convertir version X.Y en tag REL_X_Y
-    POSTGRESQL_BRANCH="REL_$(echo $FULL_VERSION | tr '.' '_')"
+    POSTGRESQL_BRANCH="REL_$(echo "$FULL_VERSION" | tr '.' '_')"
     echo "[INFO] Version fournie par FULL_VERSION: $POSTGRESQL_VERSION"
 else
     # Récupération automatique de la dernière version de la branche demandée

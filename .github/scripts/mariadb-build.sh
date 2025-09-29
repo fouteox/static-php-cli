@@ -37,7 +37,7 @@ STAGING_DIR="/tmp/mariadb-staging-$$"
 INSTALL_DIR="/tmp/mariadb-install-$$"
 
 # Nettoyage automatique en cas d'interruption
-trap "rm -rf $STAGING_DIR $INSTALL_DIR" EXIT
+trap 'rm -rf $STAGING_DIR $INSTALL_DIR' EXIT
 
 # ---------------------------
 # FONCTIONS UTILITAIRES (DRY depuis certutil-build.sh)
@@ -50,7 +50,8 @@ function get_latest_version() {
     local major_version="$1"
     echo "[INFO] Récupération de la dernière version MariaDB $major_version.x..." >&2
 
-    local latest_tag=$(git ls-remote --tags "$MARIADB_REPO" | \
+    local latest_tag
+    latest_tag=$(git ls-remote --tags "$MARIADB_REPO" | \
         grep -E "mariadb-${major_version}\.[0-9]+\.[0-9]+$" | \
         sed 's/.*refs\/tags\///' | \
         sort -V | \

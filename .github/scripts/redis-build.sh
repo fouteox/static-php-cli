@@ -37,7 +37,7 @@ STAGING_DIR="/tmp/redis-staging-$$"
 INSTALL_DIR="/tmp/redis-install-$$"
 
 # Nettoyage automatique en cas d'interruption
-trap "rm -rf $STAGING_DIR $INSTALL_DIR" EXIT
+trap 'rm -rf "$STAGING_DIR" "$INSTALL_DIR"' EXIT
 
 # ---------------------------
 # FONCTIONS UTILITAIRES (DRY depuis certutil-build.sh)
@@ -50,7 +50,8 @@ function get_latest_version() {
     local major_version="$1"
     echo "[INFO] Récupération de la dernière version Redis $major_version.x..." >&2
 
-    local latest_tag=$(git ls-remote --tags "$REDIS_REPO" | \
+    local latest_tag
+    latest_tag=$(git ls-remote --tags "$REDIS_REPO" | \
         grep -E "${major_version}\\.[0-9]+\\.[0-9]+$" | \
         sed 's/.*refs\/tags\///' | \
         sort -V | \
@@ -75,7 +76,7 @@ if [[ -n "${FULL_VERSION:-}" ]]; then
 else
     # Récupération automatique de la dernière version de la branche demandée
     REDIS_BRANCH=$(get_latest_version "$MAJOR_VERSION")
-    REDIS_VERSION=$(echo "$REDIS_BRANCH" | sed 's/\.[0-9]*$//')
+    REDIS_VERSION="${REDIS_BRANCH%.*}"
     echo "[INFO] Version détectée automatiquement: $REDIS_VERSION"
 fi
 
@@ -131,7 +132,8 @@ echo "[INFO] Redis source clonée avec succès"
 echo "[INFO] Configuration des variables d'environnement pour macOS ARM64..."
 
 # Configuration spécifique macOS d'après la doc officielle
-export HOMEBREW_PREFIX="$(brew --prefix)"
+HOMEBREW_PREFIX="$(brew --prefix)"
+export HOMEBREW_PREFIX
 export BUILD_WITH_MODULES=yes
 export BUILD_TLS=yes
 export DISABLE_WERRORS=yes

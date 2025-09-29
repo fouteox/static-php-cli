@@ -60,3 +60,10 @@ spc.phar
 spc.exe
 spc
 source
+
+# GitHub Actions workflow temporary files
+github_output.txt
+archive_info.txt
+checksums-*.txt
+metadata-services.json
+test_*.json
