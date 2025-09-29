@@ -165,41 +165,43 @@ def check_versions():
 
 
 def create_archive(service, full_version, os_name, timestamp):
-    """Create tar.xz archive containing service binaries with timestamp."""
+    """Find existing archive and prepare metadata - NO duplication with bash scripts."""
     # STRICT: timestamp is REQUIRED - no legacy support
     if not timestamp:
         raise ValueError("Timestamp is required - no legacy support")
 
-    archive_name = get_archive_filename(service, full_version, os_name, timestamp)
+    # Find existing archive created by bash scripts (pattern: service-version-os.tar.xz)
+    bash_archive_pattern = f"{service}-{full_version}-{os_name}.tar.xz"
 
-    # Map service to their package directory structure
-    service_package_dirs = {
-        'mariadb': f'mariadb-package',
-        'mysql': f'mysql-package',
-        'postgresql': f'postgresql-package',
-        'redis': f'redis-package'
-    }
+    # Search for the archive in current directory
+    import glob
+    existing_archives = glob.glob(bash_archive_pattern)
 
-    package_dir = service_package_dirs.get(service)
-    if not package_dir:
-        raise ValueError(f"Unknown service: {service}")
+    if not existing_archives:
+        raise ValueError(f"Archive not found: {bash_archive_pattern}. Bash script should create this first.")
 
-    if not Path(package_dir).exists():
-        raise ValueError(f"Package directory not found: {package_dir}")
+    if len(existing_archives) > 1:
+        raise ValueError(f"Multiple archives found: {existing_archives}")
 
-    # Create tar.xz archive from the package directory
-    with tarfile.open(archive_name, 'w:xz') as tar:
-        tar.add(package_dir, arcname='.')
+    bash_archive = existing_archives[0]
 
-    # Calculate SHA512
-    sha512_hash = calculate_sha512(archive_name)
+    # Generate the timestamped name for R2 upload
+    timestamped_archive = get_archive_filename(service, full_version, os_name, timestamp)
+
+    # Copy bash archive to timestamped name for upload
+    import shutil
+    shutil.copy2(bash_archive, timestamped_archive)
+
+    # Calculate SHA512 of the timestamped archive
+    sha512_hash = calculate_sha512(timestamped_archive)
 
     # Save hash to environment for workflow
     with open('archive_info.txt', 'w') as f:
-        f.write(f'ARCHIVE_NAME={archive_name}\n')
+        f.write(f'ARCHIVE_NAME={timestamped_archive}\n')
         f.write(f'ARCHIVE_SHA512={sha512_hash}\n')
 
-    print(f"Created {archive_name}")
+    print(f"Found bash archive: {bash_archive}")
+    print(f"Created timestamped copy: {timestamped_archive}")
     print(f"SHA512: {sha512_hash}")
 
 
