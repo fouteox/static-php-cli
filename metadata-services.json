@@ -1,0 +1,14 @@
+{
+  "last_sync": "2025-09-29T08:29:38.390408Z",
+  "mariadb": {
+    "11": {
+      "version": "11.8.3",
+      "sha512": "abcdef123456",
+      "filename": "mariadb-11.8.3-20241215120000-macos-aarch64.tar.xz",
+      "last_build": "2025-09-29T08:29:38.390590Z"
+    }
+  },
+  "mysql": {},
+  "postgresql": {},
+  "redis": {}
+}
