@@ -1,205 +1,154 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ---------------------------
-# VÉRIFICATION DES PARAMÈTRES
-# ---------------------------
-if [ $# -ne 1 ]; then
-    echo "Usage: $0 <version_majeure>"
-    echo "Exemples: $0 14, $0 15, $0 16, $0 17"
-    echo "Versions supportées: 14, 15, 16, 17"
+# Usage: ./postgresql-build.sh 17.6
+VERSION="$1"
+
+# Validate version parameter
+if [[ -z "$VERSION" ]]; then
+    echo "[ERROR] Version parameter required"
+    echo "[USAGE] $0 <version>  (e.g., $0 17.6)"
     exit 1
 fi
 
-MAJOR_VERSION="$1"
-
-# Source la configuration centralisée
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/../config/services-config.sh"
-
-# Validation dynamique de la version majeure
-SUPPORTED_VERSIONS=$(get_supported_versions "postgresql")
-if ! is_version_supported "postgresql" "$MAJOR_VERSION"; then
-    echo "Erreur: Version non supportée '$MAJOR_VERSION'"
-    echo "Versions supportées: $SUPPORTED_VERSIONS"
+# Validate version format (semantic versioning)
+if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
+    echo "[ERROR] Invalid version format: $VERSION"
+    echo "[USAGE] Use semantic versioning format: X.Y (e.g., 17.6)"
     exit 1
 fi
 
-# ---------------------------
-# CONFIGURATION POSTGRESQL
-# ---------------------------
-# Workspace isolé par version majeure
-WORKDIR="$HOME/fadogen-build/build-postgresql-$MAJOR_VERSION"
-POSTGRESQL_REPO="https://github.com/postgres/postgres.git"
+WORKDIR="$HOME/fadogen-build/postgresql-$VERSION"
+TEMP_DIR="/tmp/postgresql-$$"
+INSTALL_DIR="$TEMP_DIR/install"
 
-# Répertoires temporaires isolés par processus (évite race conditions)
-STAGING_DIR="/tmp/postgresql-staging-$$"
-INSTALL_DIR="/tmp/postgresql-install-$$"
-
-# Nettoyage automatique en cas d'interruption
-trap 'rm -rf "$STAGING_DIR" "$INSTALL_DIR"' EXIT
-
-# ---------------------------
-# FONCTIONS UTILITAIRES (DRY depuis certutil-build.sh)
-# ---------------------------
-function check_command() {
-    command -v "$1" >/dev/null 2>&1 || { echo >&2 "Erreur : $1 n'est pas installé."; exit 1; }
+# Cleanup function
+cleanup() {
+    rm -rf "$TEMP_DIR"
 }
 
-function get_latest_version() {
-    local major_version="$1"
-    echo "[INFO] Récupération de la dernière version PostgreSQL $major_version.x..." >&2
+# Setup trap for cleanup
+trap cleanup EXIT
 
-    local latest_tag
-    local latest_tag
-    latest_tag=$(git ls-remote --tags "$POSTGRESQL_REPO" | \
-        grep -E "REL_${major_version}_[0-9]+$" | \
-        sed 's/.*refs\/tags\///' | \
-        sort -V | \
-        tail -1)
-
-    if [ -z "$latest_tag" ]; then
-        echo "Erreur : Aucune version trouvée pour PostgreSQL $major_version.x" >&2
-        exit 1
-    fi
-
-    echo "$latest_tag"
-}
-
-# ---------------------------
-# 1. Détermination de la version (automatique ou override)
-# ---------------------------
-if [[ -n "${FULL_VERSION:-}" ]]; then
-    # Version fournie par variable d'environnement (workflow CI)
-    POSTGRESQL_VERSION="$FULL_VERSION"
-    # Convertir version X.Y en tag REL_X_Y
-    POSTGRESQL_BRANCH="REL_$(echo "$FULL_VERSION" | tr '.' '_')"
-    echo "[INFO] Version fournie par FULL_VERSION: $POSTGRESQL_VERSION"
-else
-    # Récupération automatique de la dernière version de la branche demandée
-    POSTGRESQL_BRANCH=$(get_latest_version "$MAJOR_VERSION")
-    POSTGRESQL_VERSION=$(echo "$POSTGRESQL_BRANCH" | sed 's/REL_//' | sed 's/_[0-9]*$//' | tr '_' '.')
-    echo "[INFO] Version détectée automatiquement: $POSTGRESQL_VERSION"
-fi
-
-echo "[INFO] Version sélectionnée: $POSTGRESQL_BRANCH"
-echo "[INFO] Version complète: $POSTGRESQL_VERSION"
-
-# ---------------------------
-# 2. Vérifications préliminaires
-# ---------------------------
-check_command git
-check_command brew
-
-echo "[INFO] Installation des dépendances via Homebrew..."
-brew install pkgconf readline openssl icu4c || true
-
-# ---------------------------
-# 3. Préparer workspace isolé par version
-# ---------------------------
-echo "[INFO] Préparation du workspace isolé pour PostgreSQL $MAJOR_VERSION.x..."
-echo "[INFO] Workspace: $WORKDIR"
-
-# Créer le workspace s'il n'existe pas
-mkdir -p "$WORKDIR"
+# Setup workspace
+mkdir -p "$WORKDIR" "$TEMP_DIR" "$INSTALL_DIR"
 cd "$WORKDIR"
 
-# Vérifier si une archive existe déjà pour cette version exacte
-ARCHIVE_NAME="postgresql-$POSTGRESQL_VERSION-macos-aarch64.tar.xz"
-if [ -f "$ARCHIVE_NAME" ]; then
-    echo "[INFO] Archive existante trouvée: $ARCHIVE_NAME"
-    echo "[INFO] Poursuite du build (écrasement de l'archive)..."
+# Download and compile PostgreSQL from source
+REPO_URL="https://github.com/postgres/postgres.git"
+SOURCE_DIR="postgresql-server"
+ARCHIVE="postgresql-$VERSION-macos-$(uname -m).tar.xz"
+
+# Convert version to PostgreSQL tag format (e.g., 17.6 -> REL_17_6)
+PG_TAG="REL_${VERSION//./_}"
+
+echo "[INFO] Downloading PostgreSQL $VERSION source code..."
+rm -rf "${WORKDIR:?}/$SOURCE_DIR"
+git clone --branch "$PG_TAG" --depth 1 "$REPO_URL" "$WORKDIR/$SOURCE_DIR"
+
+# Check if prebuilt OpenSSL is available
+if [[ -n "${PREBUILT_OPENSSL_DIR:-}" ]] && [[ -d "$PREBUILT_OPENSSL_DIR" ]]; then
+    echo "[INFO] Using prebuilt OpenSSL from: $PREBUILT_OPENSSL_DIR"
+    OPENSSL_DIR="$PREBUILT_OPENSSL_DIR"
+else
+    # Use persistent OpenSSL path (not temp directory)
+    OPENSSL_DIR="$HOME/fadogen-build/openssl-static"
+
+    # Check if OpenSSL is already built
+    if [[ ! -d "$OPENSSL_DIR/lib" ]]; then
+        echo "[INFO] Building static OpenSSL for portable binaries..."
+        cd "$TEMP_DIR"
+
+        # Download OpenSSL 3.5.3 LTS
+        curl -fsSL -o openssl-3.5.3.tar.gz https://www.openssl.org/source/openssl-3.5.3.tar.gz
+
+        # Verify download succeeded
+        if [[ ! -f openssl-3.5.3.tar.gz ]]; then
+            echo "[ERROR] Failed to download OpenSSL"
+            exit 1
+        fi
+
+        tar xzf openssl-3.5.3.tar.gz
+        cd openssl-3.5.3
+
+        # Configure for static build
+        ./Configure darwin64-arm64-cc \
+            --prefix="$OPENSSL_DIR" \
+            --openssldir="$OPENSSL_DIR" \
+            no-shared \
+            no-tests \
+            no-docs
+
+        echo "[INFO] Compiling OpenSSL..."
+        make
+
+        echo "[INFO] Installing OpenSSL static libraries..."
+        make install_sw
+    else
+        echo "[INFO] Using existing OpenSSL from: $OPENSSL_DIR"
+    fi
 fi
 
-# Nettoyer seulement les fichiers temporaires de build
-rm -rf postgres
-rm -rf "$STAGING_DIR"
+echo "[INFO] Detecting macOS SDK..."
+MACOS_SDK=$(xcrun --show-sdk-path)
+echo "[INFO] Using SDK: $MACOS_SDK"
 
-echo "[INFO] Configuration PostgreSQL build script"
-echo "[INFO] Target: PostgreSQL $POSTGRESQL_VERSION for macOS ARM64"
-echo "[INFO] Workspace: $WORKDIR"
+echo "[INFO] Building PostgreSQL $VERSION..."
+cd "$WORKDIR/$SOURCE_DIR"
 
-echo "[INFO] Clonage de PostgreSQL $POSTGRESQL_VERSION..."
-git clone --branch "$POSTGRESQL_BRANCH" --depth 1 "$POSTGRESQL_REPO" postgres
-cd postgres
-echo "[INFO] PostgreSQL source clonée avec succès"
+# Common flags for both C and C++ (optimized for portable binaries)
+COMMON_FLAGS="-O2 -fno-asynchronous-unwind-tables -arch $(uname -m)"
 
-# ---------------------------
-# 4. Build PostgreSQL (ARM64 Release)
-# ---------------------------
-echo "[INFO] Configuration PostgreSQL pour macOS ARM64..."
-
-# Configuration avec ./configure (standard PostgreSQL)
-# Utiliser le chemin final d'installation pour éviter les chemins temporaires hardcodés
-FINAL_PREFIX="/Users/Shared/Fadogen/services/postgresql/$MAJOR_VERSION"
+echo "[INFO] Configuring PostgreSQL..."
 ./configure \
-  --prefix="$FINAL_PREFIX" \
-  --with-openssl \
-  --with-icu \
-  CFLAGS="-O2 -arch arm64" \
-  LDFLAGS="-L/opt/homebrew/opt/openssl/lib" \
-  CPPFLAGS="-I/opt/homebrew/opt/openssl/include" \
-  PKG_CONFIG_PATH="/opt/homebrew/opt/icu4c/lib/pkgconfig"
+    --prefix="$INSTALL_DIR" \
+    --with-openssl \
+    --with-libedit-preferred \
+    --without-icu \
+    --without-ldap \
+    --without-gssapi \
+    --disable-rpath \
+    CFLAGS="${COMMON_FLAGS}" \
+    CXXFLAGS="${COMMON_FLAGS}" \
+    LDFLAGS="-L${OPENSSL_DIR}/lib" \
+    CPPFLAGS="-I${OPENSSL_DIR}/include"
 
-echo "[INFO] Compilation PostgreSQL..."
-make -j1
+echo "[INFO] Compiling PostgreSQL (this may take a while)..."
+make
 
-echo "[INFO] Installation temporaire..."
-make install DESTDIR="$STAGING_DIR"
+echo "[INFO] Installing PostgreSQL to temporary directory..."
+make install
 
-echo "[INFO] Build PostgreSQL terminé avec succès"
+echo "[INFO] Fixing library paths for portability..."
+cd "$INSTALL_DIR"
 
-# ---------------------------
-# 5. Extraction des binaires PostgreSQL (pattern certutil-build.sh)
-# ---------------------------
-POSTGRES_SRC="$STAGING_DIR/$FINAL_PREFIX/bin/postgres"
-PSQL_CLIENT_SRC="$STAGING_DIR/$FINAL_PREFIX/bin/psql"
-
-if [ ! -f "$POSTGRES_SRC" ]; then
-    echo "Erreur : postgres non trouvé après compilation."
-    exit 1
+# Fix libpq install_name to use @rpath
+if [[ -f lib/libpq.5.dylib ]]; then
+    install_name_tool -id "@rpath/libpq.5.dylib" lib/libpq.5.dylib
+    echo "[INFO] Fixed libpq.5.dylib install name"
 fi
 
-if [ ! -f "$PSQL_CLIENT_SRC" ]; then
-    echo "Erreur : psql client non trouvé après compilation."
-    exit 1
-fi
+# Fix all binaries that depend on libpq to use relative path
+for binary in bin/*; do
+    if [[ -f "$binary" ]] && [[ -x "$binary" ]]; then
+        # Check if binary depends on libpq
+        if otool -L "$binary" 2>/dev/null | grep -q "libpq"; then
+            # Get the current libpq path
+            OLD_PATH=$(otool -L "$binary" | grep libpq | awk '{print $1}' | head -1)
+            if [[ -n "$OLD_PATH" ]]; then
+                # Change to relative path using @executable_path
+                install_name_tool -change "$OLD_PATH" "@executable_path/../lib/libpq.5.dylib" "$binary"
+                # Add rpath pointing to lib directory
+                install_name_tool -add_rpath "@executable_path/../lib" "$binary" 2>/dev/null || true
+                echo "[INFO] Fixed $(basename "$binary")"
+            fi
+        fi
+    fi
+done
 
-echo "[INFO] Création de la structure temporaire pour l'archive..."
-PACKAGE_DIR="postgresql-package"
-rm -rf "$PACKAGE_DIR"
-mkdir -p "$PACKAGE_DIR"
+echo "[INFO] Creating portable tarball..."
+tar -cJf "$WORKDIR/$ARCHIVE" .
 
-echo "[INFO] Copie COMPLÈTE de l'installation PostgreSQL..."
-cp -r "$STAGING_DIR/$FINAL_PREFIX"/* "$PACKAGE_DIR/"
-
-echo "[INFO] Vérification de la structure de l'archive..."
-ls -la "$PACKAGE_DIR/"
-echo "[INFO] Taille de l'installation:"
-du -sh "$PACKAGE_DIR"
-
-echo "[INFO] Déplacement vers le répertoire fadogen-build..."
-cd ..
-
-echo "[INFO] Création de l'archive tar..."
-tar -cJf "$ARCHIVE_NAME" -C "postgres/$PACKAGE_DIR" .
-
-echo "[INFO] Nettoyage..."
-rm -rf "postgres/$PACKAGE_DIR"
-# Note: $STAGING_DIR et $INSTALL_DIR sont nettoyés automatiquement par le trap EXIT
-
-# ---------------------------
-# 6. Vérification
-# ---------------------------
-echo "[INFO] Vérification de l'archive..."
-ls -la "$ARCHIVE_NAME"
-
-echo "[SUCCESS] Archive PostgreSQL portable créée: $(pwd)/$ARCHIVE_NAME"
-echo "[INFO] Workspace préservé pour builds futurs: $WORKDIR"
-echo "[INFO] Pour builder d'autres versions: ./postgresql-build.sh 14|15|16|17"
-
-# ---------------------------
-# 7. Nettoyage optionnel
-# ---------------------------
-# echo "[INFO] Nettoyage du workspace..."
-# rm -rf "$WORKDIR"
+echo "[SUCCESS] Created: $ARCHIVE ($(du -sh "$WORKDIR/$ARCHIVE" | cut -f1))"
+echo "[INFO] Archive location: $WORKDIR/$ARCHIVE"
+echo "[INFO] PostgreSQL $VERSION ready for distribution"
