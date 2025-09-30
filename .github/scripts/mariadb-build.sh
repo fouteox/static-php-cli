@@ -18,6 +18,9 @@ if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     exit 1
 fi
 
+# Extract major version for version-specific configuration
+MAJOR_VERSION=${VERSION%%.*}
+
 WORKDIR="$HOME/fadogen-build/mariadb-$VERSION"
 TEMP_DIR="/tmp/mariadb-$$"
 
@@ -91,6 +94,21 @@ mkdir build && cd build
 # Common flags for both C and C++ (optimized for portable binaries)
 COMMON_FLAGS="-w -fno-asynchronous-unwind-tables -fno-common -arch $(uname -m)"
 
+# SSL configuration (version-dependent syntax)
+if [[ "$MAJOR_VERSION" == "10" ]]; then
+    # MariaDB 10: Use direct path (doesn't support OPENSSL keyword)
+    SSL_CONFIG=(
+        "-DWITH_SSL=$OPENSSL_DIR"
+    )
+else
+    # MariaDB 11+: Use OPENSSL keyword with explicit root dir
+    SSL_CONFIG=(
+        "-DWITH_SSL=OPENSSL"
+        "-DOPENSSL_ROOT_DIR=$OPENSSL_DIR"
+        "-DOPENSSL_USE_STATIC_LIBS=TRUE"
+    )
+fi
+
 echo "[INFO] Configuring MariaDB with CMake..."
 PKG_CONFIG_EXECUTABLE=false cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
@@ -107,9 +125,7 @@ PKG_CONFIG_EXECUTABLE=false cmake .. \
     -DCMAKE_DISABLE_FIND_PACKAGE_GnuTLS=TRUE \
     -DINSTALL_LAYOUT=STANDALONE \
     -DCPACK_MONOLITHIC_INSTALL=1 \
-    -DWITH_SSL=OPENSSL \
-    -DOPENSSL_ROOT_DIR="$OPENSSL_DIR" \
-    -DOPENSSL_USE_STATIC_LIBS=TRUE \
+    "${SSL_CONFIG[@]}" \
     -DWITH_ZLIB=bundled \
     -DCONC_WITH_EXTERNAL_ZLIB=OFF \
     -DWITH_UNIT_TESTS=OFF \
