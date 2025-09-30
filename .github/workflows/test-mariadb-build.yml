@@ -74,15 +74,13 @@ jobs:
           ./Configure darwin64-arm64-cc \
             --prefix="$OPENSSL_DIR" \
             --openssldir="$OPENSSL_DIR" \
-            no-shared \
+            shared \
             no-tests \
-            no-docs
+            no-docs \
+            no-atexit
 
           make
           make install_sw
-
-          echo "[INFO] OpenSSL built successfully"
-          ls -lah "$OPENSSL_DIR/lib/"
 
   build-mariadb:
     name: "Build MariaDB ${{ matrix.version }}"
@@ -114,13 +112,10 @@ jobs:
       - name: "Generate Build Timestamp"
         id: timestamp
         run: |
-          TIMESTAMP=$(date -u +"%Y%m%d%H%M%S")
-          echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
-          echo "Generated timestamp: $TIMESTAMP"
+          echo "timestamp=$(date -u +"%Y%m%d%H%M%S")" >> $GITHUB_OUTPUT
 
       - name: "Build MariaDB"
         run: |
-          echo "[INFO] Building MariaDB version ${{ matrix.version }}"
           .github/scripts/mariadb-build.sh ${{ matrix.version }}
 
       - name: "Upload archive to R2"
@@ -130,33 +125,24 @@ jobs:
           WORKDIR="$HOME/fadogen-build/mariadb-$VERSION"
           ORIGINAL_ARCHIVE="$WORKDIR/mariadb-$VERSION-macos-$ARCH.tar.xz"
 
-          # Verify archive exists
           if [[ ! -f "$ORIGINAL_ARCHIVE" ]]; then
             echo "[ERROR] Archive not found: $ORIGINAL_ARCHIVE"
             exit 1
           fi
 
-          # Create unique archive name with timestamp
           TIMESTAMP="${{ steps.timestamp.outputs.timestamp }}"
           ARCHIVE_NAME="mariadb-$VERSION-macos-$ARCH-$TIMESTAMP.tar.xz"
-
-          # Copy with new name
           cp "$ORIGINAL_ARCHIVE" "$ARCHIVE_NAME"
 
-          # Calculate SHA512
           if command -v sha512sum >/dev/null 2>&1; then
             SHA512=$(sha512sum "$ARCHIVE_NAME" | awk '{print $1}')
           else
             SHA512=$(shasum -a 512 "$ARCHIVE_NAME" | awk '{print $1}')
           fi
 
-          echo "[INFO] Archive: $ARCHIVE_NAME"
-          echo "[INFO] SHA512: $SHA512"
-          echo "[INFO] Size: $(du -h "$ARCHIVE_NAME" | cut -f1)"
+          echo "Archive: $ARCHIVE_NAME ($(du -h "$ARCHIVE_NAME" | cut -f1))"
+          echo "SHA512: $SHA512"
 
-          # Upload to R2
           aws s3 cp "$ARCHIVE_NAME" \
             s3://${{ secrets.R2_BUCKET_NAME }}/"$ARCHIVE_NAME" \
             --endpoint-url ${{ secrets.R2_ENDPOINT }}
-
-          echo "[SUCCESS] Uploaded $ARCHIVE_NAME to R2"
