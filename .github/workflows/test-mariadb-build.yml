@@ -45,21 +45,64 @@ jobs:
           echo "matrix=$matrix" >> $GITHUB_OUTPUT
           echo "Generated matrix: $matrix"
 
+  build-openssl:
+    name: "Build OpenSSL static library"
+    runs-on: macos-latest
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v5
+
+      - name: "Build OpenSSL 3.5.3"
+        run: |
+          OPENSSL_DIR="/tmp/openssl-static"
+          mkdir -p "$OPENSSL_DIR"
+
+          curl -fsSL -o openssl-3.5.3.tar.gz https://www.openssl.org/source/openssl-3.5.3.tar.gz
+          tar xzf openssl-3.5.3.tar.gz
+          cd openssl-3.5.3
+
+          ./Configure darwin64-arm64-cc \
+            --prefix="$OPENSSL_DIR" \
+            --openssldir="$OPENSSL_DIR" \
+            no-shared \
+            no-tests \
+            no-docs
+
+          make
+          make install_sw
+
+          echo "[INFO] OpenSSL built successfully"
+          ls -lah "$OPENSSL_DIR/lib/"
+
+      - name: "Upload OpenSSL artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: openssl-static-macos-arm64
+          path: /tmp/openssl-static/
+          retention-days: 1
+
   build-mariadb:
     name: "Build MariaDB ${{ matrix.version }}"
     runs-on: macos-latest
-    needs: [fetch-versions]
+    needs: [fetch-versions, build-openssl]
     timeout-minutes: 240
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: us-east-1
+      PREBUILT_OPENSSL_DIR: /tmp/openssl-static
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.fetch-versions.outputs.build-matrix) }}
     steps:
       - name: "Checkout"
         uses: actions/checkout@v5
+
+      - name: "Download OpenSSL artifact"
+        uses: actions/download-artifact@v4
+        with:
+          name: openssl-static-macos-arm64
+          path: /tmp/openssl-static
 
       - name: "Setup dependencies"
         run: |

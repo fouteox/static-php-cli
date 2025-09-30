@@ -42,6 +42,42 @@ echo "[INFO] Downloading MariaDB $VERSION source code..."
 rm -rf "${WORKDIR:?}/$SOURCE_DIR"
 git clone --branch "mariadb-$VERSION" --depth 1 --recursive "$REPO_URL" "$WORKDIR/$SOURCE_DIR"
 
+# Check if prebuilt OpenSSL is available
+if [[ -n "${PREBUILT_OPENSSL_DIR:-}" ]] && [[ -d "$PREBUILT_OPENSSL_DIR" ]]; then
+    echo "[INFO] Using prebuilt OpenSSL from: $PREBUILT_OPENSSL_DIR"
+    OPENSSL_DIR="$PREBUILT_OPENSSL_DIR"
+else
+    echo "[INFO] Building static OpenSSL for portable binaries..."
+    OPENSSL_DIR="$TEMP_DIR/openssl-static"
+    cd "$TEMP_DIR"
+
+    # Download OpenSSL 3.5.3 LTS
+    curl -fsSL -o openssl-3.5.3.tar.gz https://www.openssl.org/source/openssl-3.5.3.tar.gz
+
+    # Verify download succeeded
+    if [[ ! -f openssl-3.5.3.tar.gz ]]; then
+        echo "[ERROR] Failed to download OpenSSL"
+        exit 1
+    fi
+
+    tar xzf openssl-3.5.3.tar.gz
+    cd openssl-3.5.3
+
+    # Configure for static build (optimized for speed)
+    ./Configure darwin64-arm64-cc \
+        --prefix="$OPENSSL_DIR" \
+        --openssldir="$OPENSSL_DIR" \
+        no-shared \
+        no-tests \
+        no-docs
+
+    echo "[INFO] Compiling OpenSSL..."
+    make
+
+    echo "[INFO] Installing OpenSSL static libraries..."
+    make install_sw
+fi
+
 echo "[INFO] Detecting macOS SDK..."
 MACOS_SDK=$(xcrun --show-sdk-path)
 echo "[INFO] Using SDK: $MACOS_SDK"
@@ -56,7 +92,7 @@ mkdir build && cd build
 COMMON_FLAGS="-w -fno-asynchronous-unwind-tables -fno-common -arch $(uname -m)"
 
 echo "[INFO] Configuring MariaDB with CMake..."
-cmake .. \
+PKG_CONFIG_EXECUTABLE=false cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_COMPILER=clang \
     -DCMAKE_CXX_COMPILER=clang++ \
@@ -64,9 +100,16 @@ cmake .. \
     -DCMAKE_CXX_FLAGS="${COMMON_FLAGS}" \
     -DCMAKE_OSX_SYSROOT="${MACOS_SDK}" \
     -DBISON_EXECUTABLE=/opt/homebrew/opt/bison/bin/bison \
+    -DCMAKE_DISABLE_FIND_PACKAGE_LZ4=TRUE \
+    -DCMAKE_DISABLE_FIND_PACKAGE_ZSTD=TRUE \
+    -DCMAKE_DISABLE_FIND_PACKAGE_LZO=TRUE \
+    -DCMAKE_DISABLE_FIND_PACKAGE_Snappy=TRUE \
+    -DCMAKE_DISABLE_FIND_PACKAGE_GnuTLS=TRUE \
     -DINSTALL_LAYOUT=STANDALONE \
     -DCPACK_MONOLITHIC_INSTALL=1 \
-    -DWITH_SSL=bundled \
+    -DWITH_SSL=OPENSSL \
+    -DOPENSSL_ROOT_DIR="$OPENSSL_DIR" \
+    -DOPENSSL_USE_STATIC_LIBS=TRUE \
     -DWITH_ZLIB=bundled \
     -DCONC_WITH_EXTERNAL_ZLIB=OFF \
     -DWITH_UNIT_TESTS=OFF \
@@ -75,13 +118,11 @@ cmake .. \
     -DWITHOUT_TOKUDB=1 \
     -DWITHOUT_ROCKSDB=1 \
     -DWITHOUT_MROONGA=1 \
-    -DPLUGIN_TOKUDB=NO \
-    -DPLUGIN_ROCKSDB=NO \
-    -DPLUGIN_MROONGA=NO \
-    -DPLUGIN_PROVIDER_LZO=NO \
-    -DPLUGIN_PROVIDER_SNAPPY=NO \
-    -DPLUGIN_PROVIDER_LZ4=NO \
-    -DPLUGIN_PROVIDER_ZSTD=NO \
+    -DPLUGIN_PROVIDER_LZO=OFF \
+    -DPLUGIN_PROVIDER_SNAPPY=OFF \
+    -DPLUGIN_PROVIDER_LZ4=OFF \
+    -DPLUGIN_PROVIDER_ZSTD=OFF \
+    -DPLUGIN_ZSTD=OFF \
     -DCONNECT_WITH_MONGO=OFF \
     -DCONNECT_WITH_BSON=OFF \
     -DCONNECT_WITH_ODBC=OFF \
