@@ -52,7 +52,7 @@ else
 
     # Check if OpenSSL is already built
     if [[ ! -d "$OPENSSL_DIR/lib" ]]; then
-        echo "[INFO] Building static OpenSSL for portable binaries..."
+        echo "[INFO] Building OpenSSL for portable binaries..."
         cd "$TEMP_DIR"
 
         # Download OpenSSL 3.5.3 LTS
@@ -67,18 +67,19 @@ else
         tar xzf openssl-3.5.3.tar.gz
         cd openssl-3.5.3
 
-        # Configure for static build (testing MariaDB approach)
+        # Configure for shared build (creates both .a and .dylib)
         ./Configure darwin64-arm64-cc \
             --prefix="$OPENSSL_DIR" \
             --openssldir="$OPENSSL_DIR" \
-            no-shared \
+            shared \
             no-tests \
-            no-docs
+            no-docs \
+            no-atexit
 
         echo "[INFO] Compiling OpenSSL..."
         make
 
-        echo "[INFO] Installing OpenSSL static libraries..."
+        echo "[INFO] Installing OpenSSL libraries..."
         make install_sw
     else
         echo "[INFO] Using existing OpenSSL from: $OPENSSL_DIR"
@@ -109,7 +110,6 @@ PKG_CONFIG_EXECUTABLE=false cmake .. \
     -DBISON_EXECUTABLE=/opt/homebrew/opt/bison/bin/bison \
     -DCMAKE_PREFIX_PATH="$OPENSSL_DIR" \
     -DOPENSSL_ROOT_DIR="$OPENSSL_DIR" \
-    -DOPENSSL_USE_STATIC_LIBS=TRUE \
     -DWITH_SSL=system \
     -DWITH_ZLIB=bundled \
     -DWITH_FIDO=none \
@@ -122,9 +122,53 @@ PKG_CONFIG_EXECUTABLE=false cmake .. \
 echo "[INFO] Compiling MySQL (this may take a while)..."
 cmake --build .
 
+echo "[INFO] Installing MySQL to temporary directory..."
+INSTALL_DIR="$TEMP_DIR/mysql-install"
+cmake --install . --prefix "$INSTALL_DIR"
+
+echo "[INFO] Bundling OpenSSL for portability..."
+cd "$INSTALL_DIR"
+
+# Bundle only the 2 OpenSSL dylibs
+cp "$OPENSSL_DIR/lib/libssl.3.dylib" lib/
+cp "$OPENSSL_DIR/lib/libcrypto.3.dylib" lib/
+
+# Fix OpenSSL dylib install_names
+install_name_tool -id "@loader_path/libssl.3.dylib" lib/libssl.3.dylib
+install_name_tool -id "@loader_path/libcrypto.3.dylib" lib/libcrypto.3.dylib
+
+# Fix libssl dependency on libcrypto
+install_name_tool -change "$OPENSSL_DIR/lib/libcrypto.3.dylib" "@loader_path/libcrypto.3.dylib" lib/libssl.3.dylib
+
+# Fix OpenSSL dependencies in all MySQL binaries and libraries
+OLD_SSL="$OPENSSL_DIR/lib/libssl.3.dylib"
+OLD_CRYPTO="$OPENSSL_DIR/lib/libcrypto.3.dylib"
+
+# Fix all dylibs and plugins in lib/ (including subdirectories)
+find lib -type f \( -name "*.dylib" -o -name "*.so" \) | while read -r file; do
+    DEPTH=$(echo "$file" | awk -F'/' '{print NF-2}')
+    if [[ $DEPTH -eq 0 ]]; then
+        PREFIX="@loader_path"
+    else
+        PREFIX="@loader_path"
+        for ((i=0; i<DEPTH; i++)); do
+            PREFIX="$PREFIX/.."
+        done
+    fi
+
+    install_name_tool -change "$OLD_SSL" "$PREFIX/libssl.3.dylib" "$file" 2>/dev/null || true
+    install_name_tool -change "$OLD_CRYPTO" "$PREFIX/libcrypto.3.dylib" "$file" 2>/dev/null || true
+done
+
+# Fix all binaries
+for file in bin/*; do
+    [[ -f "$file" ]] || continue
+    install_name_tool -change "$OLD_SSL" "@loader_path/../lib/libssl.3.dylib" "$file" 2>/dev/null || true
+    install_name_tool -change "$OLD_CRYPTO" "@loader_path/../lib/libcrypto.3.dylib" "$file" 2>/dev/null || true
+done
+
 echo "[INFO] Creating portable tarball..."
-cpack -G TXZ
-mv ./mysql-*.tar.xz "$WORKDIR/$ARCHIVE"
+tar -cJf "$WORKDIR/$ARCHIVE" .
 
 echo "[SUCCESS] Created: $ARCHIVE ($(du -sh "$WORKDIR/$ARCHIVE" | cut -f1))"
 echo "[INFO] Archive location: $WORKDIR/$ARCHIVE"
