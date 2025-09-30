@@ -5,6 +5,7 @@ on:
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  OPENSSL_VERSION: "3.5.3"
 
 jobs:
   fetch-versions:
@@ -52,14 +53,23 @@ jobs:
       - name: "Checkout"
         uses: actions/checkout@v5
 
-      - name: "Build OpenSSL 3.5.3"
+      - name: "Cache OpenSSL build"
+        id: cache-openssl
+        uses: actions/cache@v4
+        with:
+          path: /tmp/openssl-static
+          key: openssl-${{ env.OPENSSL_VERSION }}-macos-arm64
+
+      - name: "Build OpenSSL ${{ env.OPENSSL_VERSION }}"
+        if: steps.cache-openssl.outputs.cache-hit != 'true'
         run: |
           OPENSSL_DIR="/tmp/openssl-static"
+          OPENSSL_VERSION="${{ env.OPENSSL_VERSION }}"
           mkdir -p "$OPENSSL_DIR"
 
-          curl -fsSL -o openssl-3.5.3.tar.gz https://www.openssl.org/source/openssl-3.5.3.tar.gz
-          tar xzf openssl-3.5.3.tar.gz
-          cd openssl-3.5.3
+          curl -fsSL -o "openssl-${OPENSSL_VERSION}.tar.gz" "https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz"
+          tar xzf "openssl-${OPENSSL_VERSION}.tar.gz"
+          cd "openssl-${OPENSSL_VERSION}"
 
           ./Configure darwin64-arm64-cc \
             --prefix="$OPENSSL_DIR" \
@@ -73,13 +83,6 @@ jobs:
 
           echo "[INFO] OpenSSL built successfully"
           ls -lah "$OPENSSL_DIR/lib/"
-
-      - name: "Upload OpenSSL artifact"
-        uses: actions/upload-artifact@v4
-        with:
-          name: openssl-static-macos-arm64
-          path: /tmp/openssl-static/
-          retention-days: 1
 
   build-mariadb:
     name: "Build MariaDB ${{ matrix.version }}"
@@ -98,11 +101,11 @@ jobs:
       - name: "Checkout"
         uses: actions/checkout@v5
 
-      - name: "Download OpenSSL artifact"
-        uses: actions/download-artifact@v4
+      - name: "Restore OpenSSL from cache"
+        uses: actions/cache@v4
         with:
-          name: openssl-static-macos-arm64
           path: /tmp/openssl-static
+          key: openssl-${{ env.OPENSSL_VERSION }}-macos-arm64
 
       - name: "Setup dependencies"
         run: |
