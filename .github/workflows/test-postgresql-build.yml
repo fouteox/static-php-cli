@@ -32,7 +32,7 @@ jobs:
           # Extract latest version for each major version
           versions_array=()
           for major in $major_versions; do
-            version=$(echo "$response" | jq -r "[.[] | select(.cycle | startswith(\"$major.\")) | select(.eol == false or (.eol | type) == \"string\")] | sort_by(.releaseDate) | reverse | .[0].latest")
+            version=$(echo "$response" | jq -r "[.[] | select(.cycle == \"$major\") | select(.eol == false or (.eol | type) == \"string\")] | sort_by(.releaseDate) | reverse | .[0].latest")
             if [[ "$version" != "null" && -n "$version" ]]; then
               versions_array+=("$version")
               echo "  PostgreSQL $major: $version"
