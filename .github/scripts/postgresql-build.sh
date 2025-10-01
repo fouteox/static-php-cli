@@ -56,7 +56,7 @@ else
 
     # Check if OpenSSL is already built
     if [[ ! -d "$OPENSSL_DIR/lib" ]]; then
-        echo "[INFO] Building static OpenSSL for portable binaries..."
+        echo "[INFO] Building OpenSSL for portable binaries..."
         cd "$TEMP_DIR"
 
         # Download OpenSSL 3.5.3 LTS
@@ -71,18 +71,19 @@ else
         tar xzf openssl-3.5.3.tar.gz
         cd openssl-3.5.3
 
-        # Configure for static build
+        # Configure for shared build (creates both .a and .dylib)
         ./Configure darwin64-arm64-cc \
             --prefix="$OPENSSL_DIR" \
             --openssldir="$OPENSSL_DIR" \
-            no-shared \
+            shared \
             no-tests \
-            no-docs
+            no-docs \
+            no-atexit
 
         echo "[INFO] Compiling OpenSSL..."
         make
 
-        echo "[INFO] Installing OpenSSL static libraries..."
+        echo "[INFO] Installing OpenSSL libraries..."
         make install_sw
     else
         echo "[INFO] Using existing OpenSSL from: $OPENSSL_DIR"
@@ -122,29 +123,72 @@ make install
 echo "[INFO] Fixing library paths for portability..."
 cd "$INSTALL_DIR"
 
-# Fix libpq install_name to use @rpath
+# Bundle OpenSSL dylibs for portability
+echo "[INFO] Bundling OpenSSL shared libraries..."
+cp "$OPENSSL_DIR/lib/libssl.3.dylib" lib/
+cp "$OPENSSL_DIR/lib/libcrypto.3.dylib" lib/
+echo "[INFO] Copied libssl.3.dylib and libcrypto.3.dylib"
+
+# Fix OpenSSL dylib install_names
+install_name_tool -id "@loader_path/libssl.3.dylib" lib/libssl.3.dylib
+install_name_tool -id "@loader_path/libcrypto.3.dylib" lib/libcrypto.3.dylib
+
+# Fix libssl dependency on libcrypto
+install_name_tool -change "$OPENSSL_DIR/lib/libcrypto.3.dylib" "@loader_path/libcrypto.3.dylib" lib/libssl.3.dylib
+
+# Fix libpq install_name
 if [[ -f lib/libpq.5.dylib ]]; then
-    install_name_tool -id "@rpath/libpq.5.dylib" lib/libpq.5.dylib
-    echo "[INFO] Fixed libpq.5.dylib install name"
+    install_name_tool -id "@loader_path/libpq.5.dylib" lib/libpq.5.dylib
 fi
 
-# Fix all binaries that depend on libpq to use relative path
-for binary in bin/*; do
-    if [[ -f "$binary" ]] && [[ -x "$binary" ]]; then
-        # Check if binary depends on libpq
-        if otool -L "$binary" 2>/dev/null | grep -q "libpq"; then
-            # Get the current libpq path
-            OLD_PATH=$(otool -L "$binary" | grep libpq | awk '{print $1}' | head -1)
-            if [[ -n "$OLD_PATH" ]]; then
-                # Change to relative path using @executable_path
-                install_name_tool -change "$OLD_PATH" "@executable_path/../lib/libpq.5.dylib" "$binary"
-                # Add rpath pointing to lib directory
-                install_name_tool -add_rpath "@executable_path/../lib" "$binary" 2>/dev/null || true
-                echo "[INFO] Fixed $(basename "$binary")"
-            fi
-        fi
+# Fix OpenSSL library paths for portability
+echo "[INFO] Fixing library dependencies for portability..."
+
+# Store the hardcoded paths that PostgreSQL binaries were compiled with
+OLD_SSL_PATH="$OPENSSL_DIR/lib/libssl.3.dylib"
+OLD_CRYPTO_PATH="$OPENSSL_DIR/lib/libcrypto.3.dylib"
+OLD_PQ_PATH="$INSTALL_DIR/lib/libpq.5.dylib"
+
+# Step 1: Fix all dylibs in lib/ directory (including subdirectories)
+echo "[INFO] Fixing dependencies in lib/ recursively..."
+find lib -type f \( -name "*.dylib" -o -name "*.so" \) | while read -r file; do
+    # Calculate the relative path from file location to lib/ root
+    # For files in lib/ -> @loader_path
+    # For files in lib/subdir/ -> @loader_path/..
+    # For files in lib/subdir/subdir2/ -> @loader_path/../..
+    DEPTH=$(echo "$file" | awk -F'/' '{print NF-2}')
+    if [[ $DEPTH -eq 0 ]]; then
+        PREFIX="@loader_path"
+    else
+        PREFIX="@loader_path"
+        for ((i=0; i<DEPTH; i++)); do
+            PREFIX="$PREFIX/.."
+        done
     fi
+
+    # Fix install_name for dylibs (not .so files)
+    if [[ "$file" == *.dylib ]]; then
+        BASENAME=$(basename "$file")
+        install_name_tool -id "$PREFIX/$BASENAME" "$file" 2>/dev/null || true
+    fi
+
+    # Change absolute paths to relative paths
+    install_name_tool -change "$OLD_SSL_PATH" "$PREFIX/libssl.3.dylib" "$file" 2>/dev/null || true
+    install_name_tool -change "$OLD_CRYPTO_PATH" "$PREFIX/libcrypto.3.dylib" "$file" 2>/dev/null || true
+    install_name_tool -change "$OLD_PQ_PATH" "$PREFIX/libpq.5.dylib" "$file" 2>/dev/null || true
 done
+
+# Step 2: Fix all binaries in bin/ directory
+echo "[INFO] Fixing dependencies in bin/*..."
+for file in bin/*; do
+    [[ -f "$file" ]] || continue
+    # Change absolute paths to relative paths (errors ignored for scripts)
+    install_name_tool -change "$OLD_SSL_PATH" "@loader_path/../lib/libssl.3.dylib" "$file" 2>/dev/null || true
+    install_name_tool -change "$OLD_CRYPTO_PATH" "@loader_path/../lib/libcrypto.3.dylib" "$file" 2>/dev/null || true
+    install_name_tool -change "$OLD_PQ_PATH" "@loader_path/../lib/libpq.5.dylib" "$file" 2>/dev/null || true
+done
+
+echo "[INFO] Library path fixing completed"
 
 echo "[INFO] Creating portable tarball..."
 tar -cJf "$WORKDIR/$ARCHIVE" .
