@@ -1,7 +1,18 @@
-name: "Test - MySQL Build"
+name: "Test - Database Build"
 
 on:
   workflow_dispatch:
+    inputs:
+      service:
+        description: 'Service to build (mysql, postgresql, mariadb, or all)'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - mysql
+          - postgresql
+          - mariadb
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -9,7 +20,7 @@ env:
 
 jobs:
   fetch-versions:
-    name: "Fetch MySQL versions"
+    name: "Fetch database versions"
     runs-on: ubuntu-latest
     outputs:
       build-matrix: ${{ steps.versions.outputs.matrix }}
@@ -17,34 +28,55 @@ jobs:
       - name: "Checkout"
         uses: actions/checkout@v5
 
-      - name: "Fetch versions using check-services-versions.sh"
+      - name: "Fetch versions for all selected services"
         id: versions
         run: |
+          SERVICE_INPUT="${{ github.event.inputs.service || 'all' }}"
+
+          # Determine which services to process
+          if [[ "$SERVICE_INPUT" == "all" ]]; then
+            SERVICES=("mysql" "postgresql" "mariadb")
+          else
+            SERVICES=("$SERVICE_INPUT")
+          fi
+
           # Source the centralized config
           source .github/config/services-config.sh
 
-          # Fetch MySQL releases from endoflife.date API
-          response=$(curl -s "https://endoflife.date/api/mysql.json")
+          # Build combined matrix
+          all_items=()
 
-          # Get supported major versions from config
-          major_versions=$(get_supported_versions "mysql")
+          for SERVICE in "${SERVICES[@]}"; do
+            echo "Fetching versions for $SERVICE..."
 
-          # Extract latest version for each major version
-          versions_array=()
-          for major in $major_versions; do
-            version=$(echo "$response" | jq -r "[.[] | select(.cycle | startswith(\"$major.\")) | select(.eol == false or (.eol | type) == \"string\")] | sort_by(.releaseDate) | reverse | .[0].latest")
-            if [[ "$version" != "null" && -n "$version" ]]; then
-              versions_array+=("$version")
-              echo "  MySQL $major: $version"
-            fi
+            # Fetch releases from endoflife.date API
+            response=$(curl -s "https://endoflife.date/api/${SERVICE}.json")
+
+            # Get supported major versions from config
+            major_versions=$(get_supported_versions "$SERVICE")
+
+            # Extract latest version for each major version
+            for major in $major_versions; do
+              # PostgreSQL uses exact cycle match, others use startswith
+              if [[ "$SERVICE" == "postgresql" ]]; then
+                version=$(echo "$response" | jq -r "[.[] | select(.cycle == \"$major\") | select(.eol == false or (.eol | type) == \"string\")] | sort_by(.releaseDate) | reverse | .[0].latest")
+              else
+                version=$(echo "$response" | jq -r "[.[] | select(.cycle | startswith(\"$major.\")) | select(.eol == false or (.eol | type) == \"string\")] | sort_by(.releaseDate) | reverse | .[0].latest")
+              fi
+
+              if [[ "$version" != "null" && -n "$version" ]]; then
+                all_items+=("{\"service\": \"$SERVICE\", \"version\": \"$version\"}")
+                echo "  ${SERVICE^} $major: $version"
+              fi
+            done
           done
 
-          # Build matrix JSON (compact, single line)
-          matrix_items=$(printf '{"version": "%s"},' "${versions_array[@]}" | sed 's/,$//')
+          # Build combined matrix JSON
+          matrix_items=$(printf '%s,' "${all_items[@]}" | sed 's/,$//')
           matrix=$(echo "{\"include\": [$matrix_items]}" | jq -c)
 
           echo "matrix=$matrix" >> $GITHUB_OUTPUT
-          echo "Generated matrix: $matrix"
+          echo "Generated combined matrix: $matrix"
 
   build-openssl:
     name: "Build OpenSSL static library"
@@ -82,8 +114,8 @@ jobs:
           make
           make install_sw
 
-  build-mysql:
-    name: "Build MySQL ${{ matrix.version }}"
+  build-service:
+    name: "Build ${{ matrix.service }} ${{ matrix.version }}"
     runs-on: macos-latest
     needs: [fetch-versions, build-openssl]
     timeout-minutes: 240
@@ -106,6 +138,7 @@ jobs:
           key: openssl-${{ env.OPENSSL_VERSION }}-macos-arm64
 
       - name: "Setup dependencies"
+        if: matrix.service == 'mysql' || matrix.service == 'mariadb'
         run: |
           brew install bison pkg-config ninja
 
@@ -114,16 +147,17 @@ jobs:
         run: |
           echo "timestamp=$(date -u +"%Y%m%d%H%M%S")" >> $GITHUB_OUTPUT
 
-      - name: "Build MySQL"
+      - name: "Build ${{ matrix.service }}"
         run: |
-          .github/scripts/mysql-build.sh ${{ matrix.version }}
+          .github/scripts/database-build.sh ${{ matrix.service }} ${{ matrix.version }}
 
       - name: "Upload archive to R2"
         run: |
+          SERVICE="${{ matrix.service }}"
           VERSION="${{ matrix.version }}"
           ARCH=$(uname -m)
-          WORKDIR="$HOME/fadogen-build/mysql-$VERSION"
-          ORIGINAL_ARCHIVE="$WORKDIR/mysql-$VERSION-macos-$ARCH.tar.xz"
+          WORKDIR="$HOME/fadogen-build/${SERVICE}-${VERSION}"
+          ORIGINAL_ARCHIVE="$WORKDIR/${SERVICE}-${VERSION}-macos-${ARCH}.tar.xz"
 
           if [[ ! -f "$ORIGINAL_ARCHIVE" ]]; then
             echo "[ERROR] Archive not found: $ORIGINAL_ARCHIVE"
@@ -131,7 +165,7 @@ jobs:
           fi
 
           TIMESTAMP="${{ steps.timestamp.outputs.timestamp }}"
-          ARCHIVE_NAME="mysql-$VERSION-macos-$ARCH-$TIMESTAMP.tar.xz"
+          ARCHIVE_NAME="${SERVICE}-${VERSION}-macos-${ARCH}-${TIMESTAMP}.tar.xz"
           cp "$ORIGINAL_ARCHIVE" "$ARCHIVE_NAME"
 
           if command -v sha512sum >/dev/null 2>&1; then
