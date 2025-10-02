@@ -4,15 +4,15 @@ set -euo pipefail
 # ================================
 # SERVICES VERSION CHECKER
 # ================================
-# Vérifie les dernières versions disponibles pour MariaDB, MySQL, PostgreSQL et Redis
-# Utilise une stratégie hybride : GitHub Releases API + Git tags
+# Vérifie les dernières versions disponibles pour MariaDB, MySQL, PostgreSQL, Redis et Valkey
+# Utilise l'API endoflife.date
 
 # ================================
 # CONFIGURATION
 # ================================
 
 # Services à vérifier
-SERVICES="mariadb mysql postgresql redis"
+SERVICES="mariadb mysql postgresql redis valkey"
 
 # Source la configuration centralisée des services
 source "$(dirname "$0")/.github/config/services-config.sh"
@@ -79,8 +79,8 @@ function get_latest_from_endoflife() {
                 | .[0].latest
             ")
             ;;
-        "mysql"|"redis")
-            # MySQL et Redis utilisent des cycles comme "9.4", "8.4", "7.4", "8.2"
+        "mysql"|"redis"|"valkey")
+            # MySQL, Redis et Valkey utilisent des cycles comme "9.4", "8.4", "7.4", "8.2", "8.1"
             # On cherche le cycle le plus récent pour la version majeure
             latest_version=$(echo "$response" | jq -r "
                 [.[] | select(.cycle | startswith(\"$major_version.\"))]

@@ -4,13 +4,14 @@ set -euo pipefail
 # ================================
 # UNIFIED DATABASE BUILD SCRIPT
 # ================================
-# Builds MySQL, PostgreSQL, MariaDB, or Redis from source with bundled OpenSSL
+# Builds MySQL, PostgreSQL, MariaDB, Redis, or Valkey from source with bundled OpenSSL
 # Usage: ./database-build.sh <service> <version>
 # Examples:
 #   ./database-build.sh mysql 8.4.3
 #   ./database-build.sh postgresql 17.6
 #   ./database-build.sh mariadb 12.0.2
-#   ./database-build.sh redis 7.4
+#   ./database-build.sh redis 7.4.5
+#   ./database-build.sh valkey 8.0.5
 
 # ================================
 # COMMON FUNCTIONS
@@ -34,7 +35,7 @@ validate_version() {
                 exit 1
             fi
             ;;
-        mysql|mariadb|redis)
+        mysql|mariadb|redis|valkey)
             if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
                 echo "[ERROR] Invalid version format for $service: $version"
                 echo "[USAGE] $service version must be X.Y.Z (e.g., 8.4.3 for MySQL, 7.4.5 for Redis)"
@@ -151,6 +152,11 @@ git_clone_source() {
             repo="https://github.com/redis/redis.git"
             recursive=""
             ;;
+        valkey)
+            tag="$version"
+            repo="https://github.com/valkey-io/valkey.git"
+            recursive=""
+            ;;
     esac
 
     echo "[INFO] Downloading $service $version source code..."
@@ -179,8 +185,8 @@ bundle_openssl() {
         install_name_tool -id "@loader_path/libssl.3.dylib" lib/libssl.3.dylib
         install_name_tool -id "@loader_path/libcrypto.3.dylib" lib/libcrypto.3.dylib
         install_name_tool -change "$OPENSSL_DIR/lib/libcrypto.3.dylib" "@loader_path/libcrypto.3.dylib" lib/libssl.3.dylib
-    elif [[ "$service" == "redis" ]]; then
-        # Redis: everything in bin/ directory
+    elif [[ "$service" == "redis" || "$service" == "valkey" ]]; then
+        # Redis/Valkey: everything in bin/ directory
         echo "[INFO] Bundling OpenSSL directly in bin/..."
         cp "$OPENSSL_DIR/lib/libssl.3.dylib" bin/
         cp "$OPENSSL_DIR/lib/libcrypto.3.dylib" bin/
@@ -215,8 +221,8 @@ fix_dylib_paths() {
     OLD_SSL_PATH="$OPENSSL_DIR/lib/libssl.3.dylib"
     OLD_CRYPTO_PATH="$OPENSSL_DIR/lib/libcrypto.3.dylib"
 
-    if [[ "$service" == "redis" ]]; then
-        # Redis: everything in bin/ with @executable_path
+    if [[ "$service" == "redis" || "$service" == "valkey" ]]; then
+        # Redis/Valkey: everything in bin/ with @executable_path
         echo "[INFO] Fixing dependencies in bin/* with @executable_path..."
         for file in bin/*; do
             [[ -f "$file" ]] || continue
@@ -293,8 +299,8 @@ create_archive() {
 
     echo "[INFO] Creating portable tarball..."
 
-    if [[ "$service" == "redis" ]]; then
-        # Redis: Archive only bin/ directory
+    if [[ "$service" == "redis" || "$service" == "valkey" ]]; then
+        # Redis/Valkey: Archive only bin/ directory
         tar -cJf "$WORKDIR/$ARCHIVE" -C bin .
     else
         # Other services: Archive entire structure
@@ -495,6 +501,41 @@ build_redis() {
     export INSTALL_DIR
 }
 
+build_valkey() {
+    local version="$1"
+
+    echo "[INFO] Building Valkey $version..."
+    cd "$WORKDIR/$SOURCE_DIR"
+
+    # Install build dependencies (Rust for modules)
+    if ! command -v rustc >/dev/null 2>&1; then
+        echo "[INFO] Installing Rust for Valkey modules..."
+        brew install rust 2>/dev/null || true
+    fi
+
+    # Configure environment for Valkey build
+    HOMEBREW_PREFIX="$(brew --prefix)"
+    export BUILD_WITH_MODULES=yes
+    export BUILD_TLS=yes
+    export DISABLE_WERRORS=yes
+    export OPENSSL_PREFIX="$OPENSSL_DIR"
+
+    # Setup PATH with GNU tools
+    export PATH="$HOMEBREW_PREFIX/opt/libtool/libexec/gnubin:$HOMEBREW_PREFIX/opt/llvm@18/bin:$HOMEBREW_PREFIX/opt/make/libexec/gnubin:$HOMEBREW_PREFIX/opt/gnu-sed/libexec/gnubin:$HOMEBREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
+    export LDFLAGS="-L$HOMEBREW_PREFIX/opt/llvm@18/lib -L$OPENSSL_DIR/lib"
+    export CPPFLAGS="-I$HOMEBREW_PREFIX/opt/llvm@18/include -I$OPENSSL_DIR/include"
+
+    echo "[INFO] Compiling Valkey (this may take a while)..."
+    make all OS=macos
+
+    echo "[INFO] Installing Valkey to temporary directory..."
+    INSTALL_DIR="$TEMP_DIR/valkey-install"
+    mkdir -p "$INSTALL_DIR"
+    make install PREFIX="$INSTALL_DIR" OS=macos
+
+    export INSTALL_DIR
+}
+
 # ================================
 # MAIN
 # ================================
@@ -506,16 +547,16 @@ VERSION="$2"
 if [[ -z "$SERVICE" ]]; then
     echo "[ERROR] Service parameter required"
     echo "[USAGE] $0 <service> <version>"
-    echo "[SERVICES] mysql, postgresql, mariadb, redis"
+    echo "[SERVICES] mysql, postgresql, mariadb, redis, valkey"
     exit 1
 fi
 
 case "$SERVICE" in
-    mysql|postgresql|mariadb|redis)
+    mysql|postgresql|mariadb|redis|valkey)
         ;;
     *)
         echo "[ERROR] Unknown service: $SERVICE"
-        echo "[SERVICES] mysql, postgresql, mariadb, redis"
+        echo "[SERVICES] mysql, postgresql, mariadb, redis, valkey"
         exit 1
         ;;
 esac
@@ -540,6 +581,9 @@ case "$SERVICE" in
         ;;
     redis)
         build_redis "$VERSION"
+        ;;
+    valkey)
+        build_valkey "$VERSION"
         ;;
 esac
 

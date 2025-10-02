@@ -144,8 +144,8 @@ jobs:
             brew install bison pkg-config ninja
           fi
 
-          # Redis needs GNU tools and Rust
-          if [[ "${{ matrix.service }}" == "redis" ]]; then
+          # Redis and Valkey need GNU tools and Rust
+          if [[ "${{ matrix.service }}" == "redis" || "${{ matrix.service }}" == "valkey" ]]; then
             brew install coreutils make llvm@18 cmake gnu-sed automake libtool wget rust
           fi
 

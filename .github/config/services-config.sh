@@ -6,7 +6,7 @@
 # Utilisé par tous les scripts : check-services-versions.sh, services_build_manager.py, scripts de build
 
 # Liste des services disponibles
-AVAILABLE_SERVICES="mariadb mysql postgresql redis"
+AVAILABLE_SERVICES="mariadb mysql postgresql redis valkey"
 
 # Fonction utilitaire : obtenir les versions supportées pour un service
 get_supported_versions() {
@@ -27,6 +27,9 @@ get_supported_versions() {
             echo "14 15 16 17 18"
             ;;
         "redis")
+            echo "7 8"
+            ;;
+        "valkey")
             echo "7 8"
             ;;
         *)
