@@ -1,4 +1,4 @@
-name: "CI on Unix"
+name: "Build PHP"
 
 on:
   schedule:
