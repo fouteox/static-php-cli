@@ -2,7 +2,7 @@ name: "CI on Unix"
 
 on:
   schedule:
-    - cron: '0 * * * *'  # Every hour
+    - cron: '0 */6 * * *'  # Every 6 hours (4 times a day)
   workflow_dispatch:
 
 env:

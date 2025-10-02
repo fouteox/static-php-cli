@@ -1,6 +1,8 @@
 name: "Build Services"
 
 on:
+  schedule:
+    - cron: '0 0,12 * * *'  # Every 12 hours (midnight and noon UTC)
   workflow_dispatch:
 
 env:
