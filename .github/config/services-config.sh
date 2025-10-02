@@ -3,7 +3,7 @@
 # CONFIGURATION CENTRALISÉE DES SERVICES
 # ================================
 # Source unique de vérité pour toutes les versions supportées
-# Utilisé par tous les scripts : check-services-versions.sh, services_build_manager.py, scripts de build
+# Utilisé par : services-metadata-manager.sh, service-build.sh
 
 # Liste des services disponibles
 AVAILABLE_SERVICES="mariadb mysql postgresql redis valkey"
