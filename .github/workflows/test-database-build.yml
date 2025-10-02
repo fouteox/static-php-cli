@@ -139,14 +139,26 @@ jobs:
 
       - name: "Setup dependencies"
         run: |
+          # Function to install Homebrew packages only if not already installed
+          brew_install_if_missing() {
+            for package in "$@"; do
+              if ! brew list --formula "$package" >/dev/null 2>&1; then
+                echo "Installing $package..."
+                brew install "$package"
+              else
+                echo "$package is already installed, skipping"
+              fi
+            done
+          }
+
           # MySQL and MariaDB need bison and ninja
           if [[ "${{ matrix.service }}" == "mysql" || "${{ matrix.service }}" == "mariadb" ]]; then
-            brew install bison pkg-config ninja
+            brew_install_if_missing bison pkg-config ninja
           fi
 
           # Redis and Valkey need GNU tools and Rust
           if [[ "${{ matrix.service }}" == "redis" || "${{ matrix.service }}" == "valkey" ]]; then
-            brew install coreutils make llvm@18 cmake gnu-sed automake libtool wget rust
+            brew_install_if_missing coreutils make llvm@18 cmake gnu-sed automake libtool wget rust
           fi
 
       - name: "Generate Build Timestamp"
