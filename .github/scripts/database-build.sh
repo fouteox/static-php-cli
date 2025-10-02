@@ -4,12 +4,13 @@ set -euo pipefail
 # ================================
 # UNIFIED DATABASE BUILD SCRIPT
 # ================================
-# Builds MySQL, PostgreSQL, or MariaDB from source with bundled OpenSSL
+# Builds MySQL, PostgreSQL, MariaDB, or Redis from source with bundled OpenSSL
 # Usage: ./database-build.sh <service> <version>
 # Examples:
 #   ./database-build.sh mysql 8.4.3
 #   ./database-build.sh postgresql 17.6
 #   ./database-build.sh mariadb 12.0.2
+#   ./database-build.sh redis 7.4
 
 # ================================
 # COMMON FUNCTIONS
@@ -33,10 +34,10 @@ validate_version() {
                 exit 1
             fi
             ;;
-        mysql|mariadb)
+        mysql|mariadb|redis)
             if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
                 echo "[ERROR] Invalid version format for $service: $version"
-                echo "[USAGE] $service version must be X.Y.Z (e.g., 8.4.3)"
+                echo "[USAGE] $service version must be X.Y.Z (e.g., 8.4.3 for MySQL, 7.4.5 for Redis)"
                 exit 1
             fi
             ;;
@@ -145,6 +146,11 @@ git_clone_source() {
             repo="https://github.com/MariaDB/server.git"
             recursive="--recursive"
             ;;
+        redis)
+            tag="$version"
+            repo="https://github.com/redis/redis.git"
+            recursive=""
+            ;;
     esac
 
     echo "[INFO] Downloading $service $version source code..."
@@ -168,20 +174,35 @@ bundle_openssl() {
 
         echo "[INFO] Copying OpenSSL libraries..."
         cp -r "$OPENSSL_DIR/lib"/* lib/
+
+        # Fix OpenSSL dylib install_names in lib/
+        install_name_tool -id "@loader_path/libssl.3.dylib" lib/libssl.3.dylib
+        install_name_tool -id "@loader_path/libcrypto.3.dylib" lib/libcrypto.3.dylib
+        install_name_tool -change "$OPENSSL_DIR/lib/libcrypto.3.dylib" "@loader_path/libcrypto.3.dylib" lib/libssl.3.dylib
+    elif [[ "$service" == "redis" ]]; then
+        # Redis: everything in bin/ directory
+        echo "[INFO] Bundling OpenSSL directly in bin/..."
+        cp "$OPENSSL_DIR/lib/libssl.3.dylib" bin/
+        cp "$OPENSSL_DIR/lib/libcrypto.3.dylib" bin/
+        echo "[INFO] Copied libssl.3.dylib and libcrypto.3.dylib to bin/"
+
+        # Fix OpenSSL dylib install_names with @executable_path
+        install_name_tool -id "@executable_path/libssl.3.dylib" bin/libssl.3.dylib
+        install_name_tool -id "@executable_path/libcrypto.3.dylib" bin/libcrypto.3.dylib
+        install_name_tool -change "$OPENSSL_DIR/lib/libcrypto.3.dylib" "@executable_path/libcrypto.3.dylib" bin/libssl.3.dylib
     else
-        # Minimal bundling for MySQL and PostgreSQL
+        # MySQL and PostgreSQL: lib/ subdirectory approach
         echo "[INFO] Bundling OpenSSL shared libraries..."
+        mkdir -p lib
         cp "$OPENSSL_DIR/lib/libssl.3.dylib" lib/
         cp "$OPENSSL_DIR/lib/libcrypto.3.dylib" lib/
         echo "[INFO] Copied libssl.3.dylib and libcrypto.3.dylib"
+
+        # Fix OpenSSL dylib install_names in lib/
+        install_name_tool -id "@loader_path/libssl.3.dylib" lib/libssl.3.dylib
+        install_name_tool -id "@loader_path/libcrypto.3.dylib" lib/libcrypto.3.dylib
+        install_name_tool -change "$OPENSSL_DIR/lib/libcrypto.3.dylib" "@loader_path/libcrypto.3.dylib" lib/libssl.3.dylib
     fi
-
-    # Fix OpenSSL dylib install_names
-    install_name_tool -id "@loader_path/libssl.3.dylib" lib/libssl.3.dylib
-    install_name_tool -id "@loader_path/libcrypto.3.dylib" lib/libcrypto.3.dylib
-
-    # Fix libssl dependency on libcrypto
-    install_name_tool -change "$OPENSSL_DIR/lib/libcrypto.3.dylib" "@loader_path/libcrypto.3.dylib" lib/libssl.3.dylib
 }
 
 fix_dylib_paths() {
@@ -194,62 +215,73 @@ fix_dylib_paths() {
     OLD_SSL_PATH="$OPENSSL_DIR/lib/libssl.3.dylib"
     OLD_CRYPTO_PATH="$OPENSSL_DIR/lib/libcrypto.3.dylib"
 
-    # PostgreSQL also needs libpq fixed
-    if [[ "$service" == "postgresql" ]]; then
-        OLD_PQ_PATH="$INSTALL_DIR/lib/libpq.5.dylib"
+    if [[ "$service" == "redis" ]]; then
+        # Redis: everything in bin/ with @executable_path
+        echo "[INFO] Fixing dependencies in bin/* with @executable_path..."
+        for file in bin/*; do
+            [[ -f "$file" ]] || continue
+            # Change absolute OpenSSL paths to @executable_path (same directory)
+            install_name_tool -change "$OLD_SSL_PATH" "@executable_path/libssl.3.dylib" "$file" 2>/dev/null || true
+            install_name_tool -change "$OLD_CRYPTO_PATH" "@executable_path/libcrypto.3.dylib" "$file" 2>/dev/null || true
+        done
+    else
+        # PostgreSQL also needs libpq fixed
+        if [[ "$service" == "postgresql" ]]; then
+            OLD_PQ_PATH="$INSTALL_DIR/lib/libpq.5.dylib"
 
-        # Fix libpq install_name
-        if [[ -f lib/libpq.5.dylib ]]; then
-            install_name_tool -id "@loader_path/libpq.5.dylib" lib/libpq.5.dylib
+            # Fix libpq install_name
+            if [[ -f lib/libpq.5.dylib ]]; then
+                install_name_tool -id "@loader_path/libpq.5.dylib" lib/libpq.5.dylib
+            fi
         fi
+
+        # Step 1: Fix all dylibs and plugins in lib/ directory (including subdirectories)
+        echo "[INFO] Fixing dependencies in lib/ recursively..."
+        find lib -type f \( -name "*.dylib" -o -name "*.so" \) | while read -r file; do
+            # Calculate the relative path from file location to lib/ root
+            # For files in lib/ -> @loader_path
+            # For files in lib/subdir/ -> @loader_path/..
+            # For files in lib/subdir/subdir2/ -> @loader_path/../..
+            DEPTH=$(echo "$file" | awk -F'/' '{print NF-2}')
+            if [[ $DEPTH -eq 0 ]]; then
+                PREFIX="@loader_path"
+            else
+                PREFIX="@loader_path"
+                for ((i=0; i<DEPTH; i++)); do
+                    PREFIX="$PREFIX/.."
+                done
+            fi
+
+            # Fix install_name for dylibs (not .so files)
+            if [[ "$file" == *.dylib ]]; then
+                BASENAME=$(basename "$file")
+                install_name_tool -id "$PREFIX/$BASENAME" "$file" 2>/dev/null || true
+            fi
+
+            # Change absolute OpenSSL paths to relative paths
+            install_name_tool -change "$OLD_SSL_PATH" "$PREFIX/libssl.3.dylib" "$file" 2>/dev/null || true
+            install_name_tool -change "$OLD_CRYPTO_PATH" "$PREFIX/libcrypto.3.dylib" "$file" 2>/dev/null || true
+
+            # PostgreSQL: fix libpq path
+            if [[ "$service" == "postgresql" ]]; then
+                install_name_tool -change "$OLD_PQ_PATH" "$PREFIX/libpq.5.dylib" "$file" 2>/dev/null || true
+            fi
+        done
+
+        # Step 2: Fix all binaries in bin/ directory
+        echo "[INFO] Fixing dependencies in bin/*..."
+        for file in bin/*; do
+            [[ -f "$file" ]] || continue
+            # Change absolute paths to relative @loader_path/../lib (errors ignored for scripts)
+            install_name_tool -change "$OLD_SSL_PATH" "@loader_path/../lib/libssl.3.dylib" "$file" 2>/dev/null || true
+            install_name_tool -change "$OLD_CRYPTO_PATH" "@loader_path/../lib/libcrypto.3.dylib" "$file" 2>/dev/null || true
+
+            # PostgreSQL: fix libpq path
+            if [[ "$service" == "postgresql" ]]; then
+                install_name_tool -change "$OLD_PQ_PATH" "@loader_path/../lib/libpq.5.dylib" "$file" 2>/dev/null || true
+            fi
+        done
     fi
-
-    # Step 1: Fix all dylibs and plugins in lib/ directory (including subdirectories)
-    echo "[INFO] Fixing dependencies in lib/ recursively..."
-    find lib -type f \( -name "*.dylib" -o -name "*.so" \) | while read -r file; do
-        # Calculate the relative path from file location to lib/ root
-        # For files in lib/ -> @loader_path
-        # For files in lib/subdir/ -> @loader_path/..
-        # For files in lib/subdir/subdir2/ -> @loader_path/../..
-        DEPTH=$(echo "$file" | awk -F'/' '{print NF-2}')
-        if [[ $DEPTH -eq 0 ]]; then
-            PREFIX="@loader_path"
-        else
-            PREFIX="@loader_path"
-            for ((i=0; i<DEPTH; i++)); do
-                PREFIX="$PREFIX/.."
-            done
-        fi
-
-        # Fix install_name for dylibs (not .so files)
-        if [[ "$file" == *.dylib ]]; then
-            BASENAME=$(basename "$file")
-            install_name_tool -id "$PREFIX/$BASENAME" "$file" 2>/dev/null || true
-        fi
-
-        # Change absolute OpenSSL paths to relative paths
-        install_name_tool -change "$OLD_SSL_PATH" "$PREFIX/libssl.3.dylib" "$file" 2>/dev/null || true
-        install_name_tool -change "$OLD_CRYPTO_PATH" "$PREFIX/libcrypto.3.dylib" "$file" 2>/dev/null || true
-
-        # PostgreSQL: fix libpq path
-        if [[ "$service" == "postgresql" ]]; then
-            install_name_tool -change "$OLD_PQ_PATH" "$PREFIX/libpq.5.dylib" "$file" 2>/dev/null || true
-        fi
-    done
-
-    # Step 2: Fix all binaries in bin/ directory
-    echo "[INFO] Fixing dependencies in bin/*..."
-    for file in bin/*; do
-        [[ -f "$file" ]] || continue
-        # Change absolute paths to relative @loader_path/../lib (errors ignored for scripts)
-        install_name_tool -change "$OLD_SSL_PATH" "@loader_path/../lib/libssl.3.dylib" "$file" 2>/dev/null || true
-        install_name_tool -change "$OLD_CRYPTO_PATH" "@loader_path/../lib/libcrypto.3.dylib" "$file" 2>/dev/null || true
-
-        # PostgreSQL: fix libpq path
-        if [[ "$service" == "postgresql" ]]; then
-            install_name_tool -change "$OLD_PQ_PATH" "@loader_path/../lib/libpq.5.dylib" "$file" 2>/dev/null || true
-        fi
-    done
 
     echo "[INFO] Library path fixing completed"
 }
@@ -260,7 +292,14 @@ create_archive() {
     cd "$INSTALL_DIR"
 
     echo "[INFO] Creating portable tarball..."
-    tar -cJf "$WORKDIR/$ARCHIVE" .
+
+    if [[ "$service" == "redis" ]]; then
+        # Redis: Archive only bin/ directory
+        tar -cJf "$WORKDIR/$ARCHIVE" -C bin .
+    else
+        # Other services: Archive entire structure
+        tar -cJf "$WORKDIR/$ARCHIVE" .
+    fi
 
     echo "[SUCCESS] Created: $ARCHIVE ($(du -sh "$WORKDIR/$ARCHIVE" | cut -f1))"
     echo "[INFO] Archive location: $WORKDIR/$ARCHIVE"
@@ -421,6 +460,41 @@ build_mariadb() {
     export INSTALL_DIR
 }
 
+build_redis() {
+    local version="$1"
+
+    echo "[INFO] Building Redis $version..."
+    cd "$WORKDIR/$SOURCE_DIR"
+
+    # Install build dependencies (Rust for modules)
+    if ! command -v rustc >/dev/null 2>&1; then
+        echo "[INFO] Installing Rust for Redis modules..."
+        brew install rust 2>/dev/null || true
+    fi
+
+    # Configure environment for Redis build
+    HOMEBREW_PREFIX="$(brew --prefix)"
+    export BUILD_WITH_MODULES=yes
+    export BUILD_TLS=yes
+    export DISABLE_WERRORS=yes
+    export OPENSSL_PREFIX="$OPENSSL_DIR"
+
+    # Setup PATH with GNU tools
+    export PATH="$HOMEBREW_PREFIX/opt/libtool/libexec/gnubin:$HOMEBREW_PREFIX/opt/llvm@18/bin:$HOMEBREW_PREFIX/opt/make/libexec/gnubin:$HOMEBREW_PREFIX/opt/gnu-sed/libexec/gnubin:$HOMEBREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
+    export LDFLAGS="-L$HOMEBREW_PREFIX/opt/llvm@18/lib -L$OPENSSL_DIR/lib"
+    export CPPFLAGS="-I$HOMEBREW_PREFIX/opt/llvm@18/include -I$OPENSSL_DIR/include"
+
+    echo "[INFO] Compiling Redis (this may take a while)..."
+    make all OS=macos
+
+    echo "[INFO] Installing Redis to temporary directory..."
+    INSTALL_DIR="$TEMP_DIR/redis-install"
+    mkdir -p "$INSTALL_DIR"
+    make install PREFIX="$INSTALL_DIR" OS=macos
+
+    export INSTALL_DIR
+}
+
 # ================================
 # MAIN
 # ================================
@@ -432,16 +506,16 @@ VERSION="$2"
 if [[ -z "$SERVICE" ]]; then
     echo "[ERROR] Service parameter required"
     echo "[USAGE] $0 <service> <version>"
-    echo "[SERVICES] mysql, postgresql, mariadb"
+    echo "[SERVICES] mysql, postgresql, mariadb, redis"
     exit 1
 fi
 
 case "$SERVICE" in
-    mysql|postgresql|mariadb)
+    mysql|postgresql|mariadb|redis)
         ;;
     *)
         echo "[ERROR] Unknown service: $SERVICE"
-        echo "[SERVICES] mysql, postgresql, mariadb"
+        echo "[SERVICES] mysql, postgresql, mariadb, redis"
         exit 1
         ;;
 esac
@@ -463,6 +537,9 @@ case "$SERVICE" in
         ;;
     mariadb)
         build_mariadb "$VERSION"
+        ;;
+    redis)
+        build_redis "$VERSION"
         ;;
 esac
 
