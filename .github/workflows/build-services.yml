@@ -1,4 +1,4 @@
-name: "Test - Database Build"
+name: "Build Services"
 
 on:
   workflow_dispatch:
@@ -152,7 +152,7 @@ jobs:
 
       - name: "Build ${{ matrix.service }}"
         run: |
-          .github/scripts/database-build.sh ${{ matrix.service }} ${{ matrix.version }}
+          .github/scripts/service-build.sh ${{ matrix.service }} ${{ matrix.version }}
 
       - name: "Upload archive to R2 and save checksum"
         run: |

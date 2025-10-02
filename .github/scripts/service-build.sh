@@ -2,16 +2,16 @@
 set -euo pipefail
 
 # ================================
-# UNIFIED DATABASE BUILD SCRIPT
+# UNIFIED SERVICE BUILD SCRIPT
 # ================================
 # Builds MySQL, PostgreSQL, MariaDB, Redis, or Valkey from source with bundled OpenSSL
-# Usage: ./database-build.sh <service> <version>
+# Usage: ./service-build.sh <service> <version>
 # Examples:
-#   ./database-build.sh mysql 8.4.3
-#   ./database-build.sh postgresql 17.6
-#   ./database-build.sh mariadb 12.0.2
-#   ./database-build.sh redis 7.4.5
-#   ./database-build.sh valkey 8.0.5
+#   ./service-build.sh mysql 8.4.3
+#   ./service-build.sh postgresql 17.6
+#   ./service-build.sh mariadb 12.0.2
+#   ./service-build.sh redis 7.4.5
+#   ./service-build.sh valkey 8.0.5
 
 # ================================
 # COMMON FUNCTIONS
