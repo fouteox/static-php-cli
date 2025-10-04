@@ -472,22 +472,29 @@ build_redis() {
     echo "[INFO] Building Redis $version..."
     cd "$WORKDIR/$SOURCE_DIR"
 
-    # Install build dependencies (Rust for modules)
-    if ! command -v rustc >/dev/null 2>&1; then
-        echo "[INFO] Installing Rust for Redis modules..."
-        brew install rust 2>/dev/null || true
+    # Extract major version
+    MAJOR_VERSION=${version%%.*}
+
+    # Redis 8+ has JSON, timeseries, bloom integrated in core (no external modules needed)
+    # Redis 7 needs BUILD_WITH_MODULES=yes for these features
+    if [[ "$MAJOR_VERSION" -ge 8 ]]; then
+        echo "[INFO] Redis $version: modules integrated in core"
+        export BUILD_WITH_MODULES=no
+    else
+        echo "[INFO] Redis $version: building with external modules"
+        export BUILD_WITH_MODULES=yes
+        # Install Rust for Redis 7 modules
+        if ! command -v rustc >/dev/null 2>&1; then
+            echo "[INFO] Installing Rust for Redis modules..."
+            brew install rust 2>/dev/null || true
+        fi
     fi
 
     # Configure environment for Redis build
     HOMEBREW_PREFIX="$(brew --prefix)"
-    export BUILD_WITH_MODULES=yes
     export BUILD_TLS=yes
     export DISABLE_WERRORS=yes
     export OPENSSL_PREFIX="$OPENSSL_DIR"
-
-    # macOS 15 Sequoia compatibility: modules use -mmacosx-version-min not recognized by macOS 15
-    # Setting deployment target to 14.0 ensures compatibility and creates portable binaries
-    export MACOSX_DEPLOYMENT_TARGET=14.0
 
     # Setup PATH with GNU tools and LLVM 18
     export PATH="$HOMEBREW_PREFIX/opt/libtool/libexec/gnubin:$HOMEBREW_PREFIX/opt/llvm@18/bin:$HOMEBREW_PREFIX/opt/make/libexec/gnubin:$HOMEBREW_PREFIX/opt/gnu-sed/libexec/gnubin:$HOMEBREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
