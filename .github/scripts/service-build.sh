@@ -472,9 +472,6 @@ build_redis() {
     echo "[INFO] Building Redis $version..."
     cd "$WORKDIR/$SOURCE_DIR"
 
-    # Extract major version
-    MAJOR_VERSION=${version%%.*}
-
     # Install build dependencies (Rust for modules)
     if ! command -v rustc >/dev/null 2>&1; then
         echo "[INFO] Installing Rust for Redis modules..."
@@ -488,21 +485,14 @@ build_redis() {
     export DISABLE_WERRORS=yes
     export OPENSSL_PREFIX="$OPENSSL_DIR"
 
-    # Redis 8+ has compatibility issues with LLVM 18's libc++ and Boost (RediSearch module)
-    # Use Apple Clang for Redis 8+, LLVM 18 for older versions
-    if [[ "$MAJOR_VERSION" -ge 8 ]]; then
-        echo "[INFO] Using Apple Clang for Redis $version (compatibility with modules)"
-        # Setup PATH with GNU tools but use system clang
-        export PATH="$HOMEBREW_PREFIX/opt/libtool/libexec/gnubin:$HOMEBREW_PREFIX/opt/make/libexec/gnubin:$HOMEBREW_PREFIX/opt/gnu-sed/libexec/gnubin:$HOMEBREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
-        export LDFLAGS="-L$OPENSSL_DIR/lib"
-        export CPPFLAGS="-I$OPENSSL_DIR/include"
-    else
-        echo "[INFO] Using LLVM 18 for Redis $version"
-        # Setup PATH with GNU tools and LLVM 18
-        export PATH="$HOMEBREW_PREFIX/opt/libtool/libexec/gnubin:$HOMEBREW_PREFIX/opt/llvm@18/bin:$HOMEBREW_PREFIX/opt/make/libexec/gnubin:$HOMEBREW_PREFIX/opt/gnu-sed/libexec/gnubin:$HOMEBREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
-        export LDFLAGS="-L$HOMEBREW_PREFIX/opt/llvm@18/lib -L$OPENSSL_DIR/lib"
-        export CPPFLAGS="-I$HOMEBREW_PREFIX/opt/llvm@18/include -I$OPENSSL_DIR/include"
-    fi
+    # macOS 15 Sequoia compatibility: modules use -mmacosx-version-min not recognized by macOS 15
+    # Setting deployment target to 14.0 ensures compatibility and creates portable binaries
+    export MACOSX_DEPLOYMENT_TARGET=14.0
+
+    # Setup PATH with GNU tools and LLVM 18
+    export PATH="$HOMEBREW_PREFIX/opt/libtool/libexec/gnubin:$HOMEBREW_PREFIX/opt/llvm@18/bin:$HOMEBREW_PREFIX/opt/make/libexec/gnubin:$HOMEBREW_PREFIX/opt/gnu-sed/libexec/gnubin:$HOMEBREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
+    export LDFLAGS="-L$HOMEBREW_PREFIX/opt/llvm@18/lib -L$OPENSSL_DIR/lib"
+    export CPPFLAGS="-I$HOMEBREW_PREFIX/opt/llvm@18/include -I$OPENSSL_DIR/include"
 
     echo "[INFO] Compiling Redis (this may take a while)..."
     make all OS=macos
