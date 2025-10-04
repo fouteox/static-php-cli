@@ -105,6 +105,7 @@ jobs:
     needs: [check-and-sync, resolve-openssl, build-openssl]
     if: needs.check-and-sync.outputs.should-build == 'true'
     timeout-minutes: 240
+    continue-on-error: true
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -204,7 +205,6 @@ jobs:
     name: "Update metadata-services.json"
     runs-on: ubuntu-latest
     needs: [check-and-sync, build-service]
-    if: needs.build-service.result == 'success'
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -230,16 +230,8 @@ jobs:
 
       - name: "Update metadata"
         run: |
-          # Consolidate all checksums
-          ALL_CHECKSUMS=""
-          if ls checksums-*.txt 2>/dev/null; then
-            ALL_CHECKSUMS=$(cat checksums-*.txt 2>/dev/null | grep -v "^$")
-          fi
-
-          if [[ -z "$ALL_CHECKSUMS" ]]; then
-            echo "[ERROR] No checksums found"
-            exit 1
-          fi
+          # Consolidate all checksums (only from successful builds)
+          ALL_CHECKSUMS=$(cat checksums-*.txt 2>/dev/null | grep -v "^$")
 
           # Update metadata
           echo "$ALL_CHECKSUMS" | .github/scripts/services-metadata-manager.sh update-metadata
@@ -256,8 +248,7 @@ jobs:
   cleanup-old-builds:
     name: "Cleanup old service builds"
     runs-on: ubuntu-latest
-    needs: [check-and-sync, update-metadata]
-    if: needs.check-and-sync.outputs.should-build == 'true'
+    needs: [update-metadata]
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -273,12 +264,10 @@ jobs:
 
       - name: "Cleanup old builds"
         run: |
-          BUILD_MATRIX='${{ needs.check-and-sync.outputs.build-matrix }}'
-
           echo "Starting cleanup of old service builds..."
 
-          # Parse build matrix and cleanup each service-major version
-          echo "$BUILD_MATRIX" | jq -r '.include[] | "\(.service),\(.major)"' | sort -u | while IFS=',' read -r service major; do
+          # Extract service-major pairs from metadata (only successful builds are in metadata)
+          jq -r 'to_entries[] | .key as $service | .value | to_entries[] | "\($service),\(.key)"' metadata-services.json | sort -u | while IFS=',' read -r service major; do
             echo "Cleaning up old builds for $service major version $major..."
 
             # Get the current filename from metadata
