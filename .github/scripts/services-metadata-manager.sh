@@ -167,7 +167,7 @@ update_metadata() {
         log_info "Creating new metadata"
     fi
 
-    # Read checksums from stdin (format: service,version,major,sha512,filename)
+    # Read checksums from stdin (format: service,version,major,sha256,filename)
     local checksums_input
     checksums_input=$(cat)
 
@@ -176,7 +176,7 @@ update_metadata() {
     fi
 
     # Process each checksum line
-    while IFS=',' read -r service version major sha512 filename; do
+    while IFS=',' read -r service version major sha256 filename; do
         [[ -z "$service" ]] && continue
 
         log_info "  Updating $service $major ($version)"
@@ -186,11 +186,12 @@ update_metadata() {
             --arg service "$service" \
             --arg major "$major" \
             --arg latest "$version" \
-            --arg sha512 "$sha512" \
+            --arg sha256 "$sha256" \
             --arg filename "$filename" \
             '.[$service][$major] = {
                 "latest": $latest,
-                "sha512": $sha512,
+                "sha256": $sha256,
+                "checksumType": "sha256-base64",
                 "filename": $filename
             }')
     done <<< "$checksums_input"

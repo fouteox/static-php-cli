@@ -157,7 +157,7 @@ jobs:
         run: |
           .github/scripts/service-build.sh ${{ matrix.service }} ${{ matrix.version }}
 
-      - name: "Upload archive to R2 and save checksum"
+      - name: "Upload archive to R2 with SHA-256 checksum"
         run: |
           SERVICE="${{ matrix.service }}"
           VERSION="${{ matrix.version }}"
@@ -175,30 +175,33 @@ jobs:
           ARCHIVE_NAME="${SERVICE}-${VERSION}-macos-${ARCH}-${TIMESTAMP}.tar.xz"
           cp "$ORIGINAL_ARCHIVE" "$ARCHIVE_NAME"
 
-          # Calculate SHA512
-          if command -v sha512sum >/dev/null 2>&1; then
-            SHA512=$(sha512sum "$ARCHIVE_NAME" | awk '{print $1}')
-          else
-            SHA512=$(shasum -a 512 "$ARCHIVE_NAME" | awk '{print $1}')
-          fi
+          echo "Uploading: $ARCHIVE_NAME ($(du -h "$ARCHIVE_NAME" | cut -f1))"
 
-          echo "Archive: $ARCHIVE_NAME ($(du -h "$ARCHIVE_NAME" | cut -f1))"
-          echo "SHA512: $SHA512"
+          # Upload with native SHA-256 checksum (captures checksum in response)
+          UPLOAD_RESULT=$(aws s3api put-object \
+            --bucket ${{ secrets.R2_BUCKET_NAME }} \
+            --key "$ARCHIVE_NAME" \
+            --body "$ARCHIVE_NAME" \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }} \
+            --checksum-algorithm SHA256 \
+            --metadata service="$SERVICE",version="$VERSION",major="$MAJOR" \
+            --output json)
 
-          # Upload to R2
-          aws s3 cp "$ARCHIVE_NAME" \
-            s3://${{ secrets.R2_BUCKET_NAME }}/"$ARCHIVE_NAME" \
-            --endpoint-url ${{ secrets.R2_ENDPOINT }}
+          # Extract checksum from upload response (no extra API call needed!)
+          CHECKSUM=$(echo "$UPLOAD_RESULT" | jq -r '.ChecksumSHA256')
 
-          # Save checksum (format: service,version,major,sha512,filename)
-          echo "${SERVICE},${VERSION},${MAJOR},${SHA512},${ARCHIVE_NAME}" > checksums-${SERVICE}-${VERSION}.txt
-          echo "Checksum saved: ${SERVICE},${VERSION},${MAJOR},${SHA512},${ARCHIVE_NAME}"
+          echo "✓ Uploaded: $ARCHIVE_NAME"
+          echo "✓ SHA-256 (base64): $CHECKSUM"
 
-      - name: "Upload checksums"
+          # Save checksum info (format: service,version,major,sha256,filename)
+          echo "${SERVICE},${VERSION},${MAJOR},${CHECKSUM},${ARCHIVE_NAME}" > checksum-output.txt
+          echo "Checksum saved: ${SERVICE},${VERSION},${MAJOR},${CHECKSUM},${ARCHIVE_NAME}"
+
+      - name: "Upload checksum info"
         uses: actions/upload-artifact@v4
         with:
           name: checksum-${{ matrix.service }}-${{ matrix.version }}
-          path: checksums-${{ matrix.service }}-${{ matrix.version }}.txt
+          path: checksum-output.txt
           retention-days: 1
 
   update-metadata:
@@ -230,10 +233,10 @@ jobs:
 
       - name: "Update metadata"
         run: |
-          # Consolidate all checksums (only from successful builds)
-          ALL_CHECKSUMS=$(cat checksums-*.txt 2>/dev/null | grep -v "^$")
+          # Consolidate all checksums from successful builds
+          ALL_CHECKSUMS=$(cat checksum-output.txt 2>/dev/null | grep -v "^$")
 
-          # Update metadata
+          # Update metadata (format: service,version,major,sha256-base64,filename)
           echo "$ALL_CHECKSUMS" | .github/scripts/services-metadata-manager.sh update-metadata
 
           # Display updated metadata
