@@ -193,7 +193,7 @@ jobs:
 
             aws s3api list-objects-v2 \
               --bucket ${{ secrets.R2_BUCKET_NAME }} \
-              --prefix "php-$php_version-" \
+              --prefix "php-$php_version." \
               --endpoint-url ${{ secrets.R2_ENDPOINT }} \
               --query 'Contents[].Key' \
               --output text | tr '\t' '\n' | while read -r file_key; do
