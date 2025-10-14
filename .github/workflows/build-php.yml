@@ -114,12 +114,13 @@ jobs:
             --metadata phpversion="${{ matrix.full-version }}",majorminor="${{ matrix.php-version }}" \
             --output json)
 
-          CHECKSUM=$(echo "$UPLOAD_RESULT" | jq -r '.ChecksumSHA256')
+          CHECKSUM_BASE64=$(echo "$UPLOAD_RESULT" | jq -r '.ChecksumSHA256')
+          CHECKSUM_HEX=$(echo "$CHECKSUM_BASE64" | base64 -d | xxd -p -c 256)
 
           echo "✓ Uploaded: $ARCHIVE_NAME"
-          echo "✓ SHA-256 (base64): $CHECKSUM"
+          echo "✓ SHA-256: $CHECKSUM_HEX"
 
-          echo "CHECKSUM_SHA256=$CHECKSUM" >> $GITHUB_ENV
+          echo "CHECKSUM_SHA256=$CHECKSUM_HEX" >> $GITHUB_ENV
 
       - name: "Save checksum"
         run: |

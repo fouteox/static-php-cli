@@ -191,7 +191,7 @@ update_metadata() {
             '.[$service][$major] = {
                 "latest": $latest,
                 "sha256": $sha256,
-                "checksumType": "sha256-base64",
+                "checksumType": "sha256",
                 "filename": $filename
             }')
     done <<< "$checksums_input"

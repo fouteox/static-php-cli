@@ -187,15 +187,16 @@ jobs:
             --metadata service="$SERVICE",version="$VERSION",major="$MAJOR" \
             --output json)
 
-          # Extract checksum from upload response (no extra API call needed!)
-          CHECKSUM=$(echo "$UPLOAD_RESULT" | jq -r '.ChecksumSHA256')
+          # Extract checksum from upload response and convert to hex
+          CHECKSUM_BASE64=$(echo "$UPLOAD_RESULT" | jq -r '.ChecksumSHA256')
+          CHECKSUM_HEX=$(echo "$CHECKSUM_BASE64" | base64 -d | xxd -p -c 256)
 
           echo "✓ Uploaded: $ARCHIVE_NAME"
-          echo "✓ SHA-256 (base64): $CHECKSUM"
+          echo "✓ SHA-256: $CHECKSUM_HEX"
 
           # Save checksum info (format: service,version,major,sha256,filename)
-          echo "${SERVICE},${VERSION},${MAJOR},${CHECKSUM},${ARCHIVE_NAME}" > checksum-output.txt
-          echo "Checksum saved: ${SERVICE},${VERSION},${MAJOR},${CHECKSUM},${ARCHIVE_NAME}"
+          echo "${SERVICE},${VERSION},${MAJOR},${CHECKSUM_HEX},${ARCHIVE_NAME}" > checksum-output.txt
+          echo "Checksum saved: ${SERVICE},${VERSION},${MAJOR},${CHECKSUM_HEX},${ARCHIVE_NAME}"
 
       - name: "Upload checksum info"
         uses: actions/upload-artifact@v4
@@ -236,7 +237,7 @@ jobs:
           # Consolidate all checksums from successful builds
           ALL_CHECKSUMS=$(cat checksum-output.txt 2>/dev/null | grep -v "^$")
 
-          # Update metadata (format: service,version,major,sha256-base64,filename)
+          # Update metadata (format: service,version,major,sha256,filename)
           echo "$ALL_CHECKSUMS" | .github/scripts/services-metadata-manager.sh update-metadata
 
           # Display updated metadata
