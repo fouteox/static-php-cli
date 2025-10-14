@@ -152,7 +152,6 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           pattern: checksum-*
-          merge-multiple: true
 
       - name: "Update metadata-php.json"
         run: |
@@ -166,8 +165,14 @@ jobs:
           BUILD_MATRIX='${{ needs.check-and-sync.outputs.build-matrix }}'
 
           ALL_CHECKSUMS=""
-          if ls checksum-output.txt 2>/dev/null; then
-            ALL_CHECKSUMS=$(cat checksum-output.txt 2>/dev/null | grep -v "^$")
+          for checksum_file in checksum-*/checksum-output.txt; do
+            if [ -f "$checksum_file" ]; then
+              cat "$checksum_file" >> all-checksums.txt
+            fi
+          done
+
+          if [ -f all-checksums.txt ]; then
+            ALL_CHECKSUMS=$(cat all-checksums.txt | grep -v "^$")
           fi
 
           python3 .github/scripts/php_build_manager.py update-metadata \
