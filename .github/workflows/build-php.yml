@@ -125,14 +125,14 @@ jobs:
         run: |
           source archive_info.txt
 
-          echo "${{ matrix.full-version }},$CHECKSUM_SHA256,$ARCHIVE_NAME" > checksum-output.txt
+          echo "${{ matrix.full-version }},$CHECKSUM_SHA256,$ARCHIVE_NAME" > checksum-${{ matrix.full-version }}.txt
           echo "Checksum saved: ${{ matrix.full-version }},$CHECKSUM_SHA256,$ARCHIVE_NAME"
 
       - name: "Upload checksum info"
         uses: actions/upload-artifact@v4
         with:
           name: checksum-${{ matrix.full-version }}
-          path: checksum-output.txt
+          path: checksum-${{ matrix.full-version }}.txt
           retention-days: 1
 
   update-metadata:
@@ -152,6 +152,7 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           pattern: checksum-*
+          merge-multiple: true
 
       - name: "Update metadata-php.json"
         run: |
@@ -164,16 +165,7 @@ jobs:
 
           BUILD_MATRIX='${{ needs.check-and-sync.outputs.build-matrix }}'
 
-          ALL_CHECKSUMS=""
-          for checksum_file in checksum-*/checksum-output.txt; do
-            if [ -f "$checksum_file" ]; then
-              cat "$checksum_file" >> all-checksums.txt
-            fi
-          done
-
-          if [ -f all-checksums.txt ]; then
-            ALL_CHECKSUMS=$(cat all-checksums.txt | grep -v "^$")
-          fi
+          ALL_CHECKSUMS=$(cat checksum-*.txt 2>/dev/null | grep -v "^$")
 
           python3 .github/scripts/php_build_manager.py update-metadata \
             --build-matrix "$BUILD_MATRIX" \
@@ -190,63 +182,27 @@ jobs:
           echo "$BUILD_MATRIX" | jq -r '.include[].["php-version"]' | sort -u | while read php_version; do
             echo "Cleaning up old binaries for PHP $php_version"
 
+            CURRENT_FILENAME=$(jq -r ".\"$php_version\".filename // \"\"" metadata-php.json)
+
+            if [[ -z "$CURRENT_FILENAME" ]]; then
+              echo "  No current filename found in metadata for PHP $php_version"
+              continue
+            fi
+
+            echo "  Current file: $CURRENT_FILENAME"
+
             aws s3api list-objects-v2 \
               --bucket ${{ secrets.R2_BUCKET_NAME }} \
               --prefix "php-$php_version-" \
               --endpoint-url ${{ secrets.R2_ENDPOINT }} \
-              --query 'sort_by(Contents, &LastModified)[:-3].Key' \
-              --output text | \
-            while read -r file_key; do
-              if [ "$file_key" != "None" ] && [ -n "$file_key" ]; then
-                echo "Deleting old binary: $file_key"
-                aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/"$file_key" \
-                  --endpoint-url ${{ secrets.R2_ENDPOINT }} || echo "Failed to delete $file_key"
-              fi
-            done
-          done
-
-          echo "Cleanup completed"
-
-  cleanup-eol:
-    name: "Cleanup EOL versions"
-    runs-on: ubuntu-latest
-    needs: [check-and-sync, update-metadata]
-    if: needs.check-and-sync.outputs.eol-versions != '[]'
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: us-east-1
-    steps:
-      - name: "Checkout"
-        uses: actions/checkout@v5
-
-      - name: "Cleanup EOL versions"
-        run: |
-          EOL_VERSIONS='${{ needs.check-and-sync.outputs.eol-versions }}'
-          echo "EOL versions to cleanup: $EOL_VERSIONS"
-
-          echo "$EOL_VERSIONS" | jq -r '.[]' | while read -r version; do
-            echo "Cleaning up PHP $version..."
-
-            aws s3api list-objects-v2 \
-              --bucket ${{ secrets.R2_BUCKET_NAME }} \
-              --prefix "php-$version-" \
-              --endpoint-url ${{ secrets.R2_ENDPOINT }} \
               --query 'Contents[].Key' \
-              --output text | \
-            while read -r file_key; do
-              if [ "$file_key" != "None" ] && [ -n "$file_key" ]; then
-                echo "  Deleting: $file_key"
+              --output text | tr '\t' '\n' | while read -r file_key; do
+              if [[ "$file_key" != "$CURRENT_FILENAME" ]] && [[ "$file_key" != "None" ]] && [[ -n "$file_key" ]]; then
+                echo "  Deleting old binary: $file_key"
                 aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/"$file_key" \
                   --endpoint-url ${{ secrets.R2_ENDPOINT }} || echo "  Failed to delete $file_key"
               fi
             done
           done
 
-          # Remove EOL versions from metadata-php.json
-          if aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata-php.json metadata-php.json --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null; then
-            python3 .github/scripts/php_build_manager.py cleanup-eol \
-              --eol-versions '${{ needs.check-and-sync.outputs.eol-versions }}'
-            aws s3 cp metadata-php.json s3://${{ secrets.R2_BUCKET_NAME }}/metadata-php.json --endpoint-url ${{ secrets.R2_ENDPOINT }}
-            echo "Updated metadata-php.json after EOL cleanup"
-          fi
+          echo "Cleanup completed"
