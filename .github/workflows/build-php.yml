@@ -27,23 +27,19 @@ jobs:
       - name: "Sync PHP versions"
         id: sync
         run: |
-          # Download current metadata.json from R2 (or create empty if not exists)
-          if aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata.json metadata.json --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null; then
-            echo "Downloaded existing metadata.json"
+          if aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata-php.json metadata-php.json --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null; then
+            echo "Downloaded existing metadata-php.json"
           else
-            echo '{"last_sync": "", "versions": {}}' > metadata.json
-            echo "Created empty metadata.json"
+            echo '{}' > metadata-php.json
+            echo "Created empty metadata-php.json"
           fi
 
-          # Fetch PHP.net API
           echo "Fetching PHP.net API..."
           curl -fsSL https://www.php.net/releases/index.php?json > api_response.json
 
-          # Run check versions script
           python3 .github/scripts/php_build_manager.py check-versions
           cat github_output.txt >> "$GITHUB_OUTPUT"
 
-  # Build job (dynamic matrix from check-and-sync)
   build:
     name: "Build PHP ${{ matrix.php-version }} on ${{ matrix.os }}"
     runs-on: ${{ matrix.runs-on }}
@@ -71,7 +67,6 @@ jobs:
         env:
           phpts: nts
 
-      # Cache downloaded source
       - id: cache-download
         uses: actions/cache@v4
         with:
@@ -80,19 +75,15 @@ jobs:
 
       - name: "Download sources"
         run: |
-          # Define extensions to download and build
           EXTENSIONS="bcmath,bz2,calendar,ctype,curl,dba,dom,exif,ffi,fileinfo,filter,ftp,gd,gmp,iconv,igbinary,imagick,imap,intl,ldap,lz4,mbregex,mbstring,mongodb,mysqli,mysqlnd,opcache,openssl,pcntl,pdo,pdo_mysql,pdo_pgsql,pdo_sqlite,pdo_sqlsrv,pgsql,phar,posix,readline,redis,session,shmop,simplexml,soap,sockets,sodium,sqlite3,sqlsrv,sysvmsg,sysvsem,sysvshm,tokenizer,xml,xmlreader,xmlwriter,xsl,zip,zlib"
 
-          # Define build commands for macOS aarch64
           DOWN_CMD="curl -fsSL -o spc https://dl.static-php.dev/static-php-cli/spc-bin/nightly/spc-macos-aarch64 && chmod +x spc && ./spc doctor --auto-fix && ./spc download"
 
           DOWNLOAD_CMD="$DOWN_CMD --with-php=${{ matrix.php-version }} --for-extensions=\"$EXTENSIONS\" --ignore-cache-sources=php-src --prefer-pre-built"
           eval "$DOWNLOAD_CMD"
 
-          # Export extensions for next step
           echo "EXTENSIONS=$EXTENSIONS" >> $GITHUB_ENV
 
-      # Generate unique timestamp - SINGLE source of truth
       - name: "Generate Build Timestamp"
         id: timestamp
         run: |
@@ -105,44 +96,47 @@ jobs:
           export SPC_PHP_VERSION_SHORT=$(echo ${{ matrix.php-version }} | sed 's/\.//g' | cut -c1-2)
           ./spc build $EXTENSIONS --build-cli --build-fpm -P .github/scripts/patch_fadogen_ini_scan.php
 
-      # Create unified archive and upload to R2 - ATOMIC
-      - name: "Create and Upload PHP archive to R2"
+      - name: "Create and Upload PHP archive to R2 with SHA-256"
         run: |
-          # STRICT: Create archive with REQUIRED timestamp
           python3 .github/scripts/php_build_manager.py create-archive \
             --php-version ${{ matrix.full-version }} \
-            --os ${{ matrix.os }} \
             --timestamp ${{ steps.timestamp.outputs.timestamp }}
 
-          # Load archive info
           source archive_info.txt
-          echo "Archive created: $ARCHIVE_NAME with SHA512: $ARCHIVE_SHA512"
+          echo "Uploading: $ARCHIVE_NAME"
 
-          # ATOMIC: Upload archive with unique filename - no collision possible
-          aws s3 cp "$ARCHIVE_NAME" \
-            s3://${{ secrets.R2_BUCKET_NAME }}/"$ARCHIVE_NAME" \
-            --endpoint-url ${{ secrets.R2_ENDPOINT }}
+          UPLOAD_RESULT=$(aws s3api put-object \
+            --bucket ${{ secrets.R2_BUCKET_NAME }} \
+            --key "$ARCHIVE_NAME" \
+            --body "$ARCHIVE_NAME" \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }} \
+            --checksum-algorithm SHA256 \
+            --metadata phpversion="${{ matrix.full-version }}",majorminor="${{ matrix.php-version }}" \
+            --output json)
 
-      # Save checksum with filename - STRICT format
+          CHECKSUM=$(echo "$UPLOAD_RESULT" | jq -r '.ChecksumSHA256')
+
+          echo "✓ Uploaded: $ARCHIVE_NAME"
+          echo "✓ SHA-256 (base64): $CHECKSUM"
+
+          echo "CHECKSUM_SHA256=$CHECKSUM" >> $GITHUB_ENV
+
       - name: "Save checksum"
         run: |
-          # Load archive info
           source archive_info.txt
 
-          # STRICT: Create checksum file with ALL 4 required fields (version,os,sha512,filename)
-          echo "${{ matrix.full-version }},${{ matrix.os }},$ARCHIVE_SHA512,$ARCHIVE_NAME" > checksums-${{ matrix.full-version }}-${{ matrix.os }}.txt
-          echo "Checksum saved: ${{ matrix.full-version }},${{ matrix.os }},$ARCHIVE_SHA512,$ARCHIVE_NAME"
+          echo "${{ matrix.full-version }},$CHECKSUM_SHA256,$ARCHIVE_NAME" > checksum-output.txt
+          echo "Checksum saved: ${{ matrix.full-version }},$CHECKSUM_SHA256,$ARCHIVE_NAME"
 
-      # Upload checksum artifact (one per version-os)
-      - name: "Upload checksums"
+      - name: "Upload checksum info"
         uses: actions/upload-artifact@v4
         with:
-          name: checksum-${{ matrix.full-version }}-${{ matrix.os }}
-          path: checksums-${{ matrix.full-version }}-${{ matrix.os }}.txt
+          name: checksum-${{ matrix.full-version }}
+          path: checksum-output.txt
           retention-days: 1
 
   update-metadata:
-    name: "Update central metadata.json"
+    name: "Update metadata-php.json"
     runs-on: ubuntu-latest
     needs: [check-and-sync, build]
     if: needs.build.result == 'success'
@@ -154,51 +148,43 @@ jobs:
       - name: "Checkout"
         uses: actions/checkout@v5
 
-      # Download all checksum artifacts
       - name: "Download checksums"
         uses: actions/download-artifact@v5
         with:
           pattern: checksum-*
           merge-multiple: true
 
-      - name: "Update metadata.json"
+      - name: "Update metadata-php.json"
         run: |
-          # Download current metadata.json from R2 (or create empty if not exists)
-          if aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata.json metadata.json --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null; then
-            echo "Downloaded existing metadata.json"
+          if aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata-php.json metadata-php.json --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null; then
+            echo "Downloaded existing metadata-php.json"
           else
-            echo '{"last_sync": "", "versions": {}}' > metadata.json
-            echo "Created empty metadata.json"
+            echo '{}' > metadata-php.json
+            echo "Created empty metadata-php.json"
           fi
 
           BUILD_MATRIX='${{ needs.check-and-sync.outputs.build-matrix }}'
 
-          # Consolidate all downloaded checksum files
           ALL_CHECKSUMS=""
-          if ls checksums-*.txt 2>/dev/null; then
-            ALL_CHECKSUMS=$(cat checksums-*.txt 2>/dev/null | grep -v "^$")
+          if ls checksum-output.txt 2>/dev/null; then
+            ALL_CHECKSUMS=$(cat checksum-output.txt 2>/dev/null | grep -v "^$")
           fi
 
-          # Update metadata with build results
           python3 .github/scripts/php_build_manager.py update-metadata \
             --build-matrix "$BUILD_MATRIX" \
             --archive-checksums "$ALL_CHECKSUMS"
 
-          # Upload updated metadata.json to R2
-          aws s3 cp metadata.json s3://${{ secrets.R2_BUCKET_NAME }}/metadata.json --endpoint-url ${{ secrets.R2_ENDPOINT }}
-          echo "Uploaded metadata.json to R2"
+          aws s3 cp metadata-php.json s3://${{ secrets.R2_BUCKET_NAME }}/metadata-php.json --endpoint-url ${{ secrets.R2_ENDPOINT }}
+          echo "Uploaded metadata-php.json to R2"
 
-      # YAGNI: Simple cleanup - keep only last 3 versions per PHP version
       - name: "Cleanup old binaries"
         run: |
           echo "Starting cleanup of old PHP binaries..."
 
-          # Cleanup for each PHP version in the build matrix
           BUILD_MATRIX='${{ needs.check-and-sync.outputs.build-matrix }}'
           echo "$BUILD_MATRIX" | jq -r '.include[].["php-version"]' | sort -u | while read php_version; do
             echo "Cleaning up old binaries for PHP $php_version"
 
-            # List all files for this PHP version, sort by last modified, keep newest 3, delete the rest
             aws s3api list-objects-v2 \
               --bucket ${{ secrets.R2_BUCKET_NAME }} \
               --prefix "php-$php_version-" \
@@ -234,26 +220,28 @@ jobs:
           EOL_VERSIONS='${{ needs.check-and-sync.outputs.eol-versions }}'
           echo "EOL versions to cleanup: $EOL_VERSIONS"
 
-          # Define all OS targets
-          ALL_OS="macos-aarch64"
-
-          # Parse EOL versions from JSON array
           echo "$EOL_VERSIONS" | jq -r '.[]' | while read -r version; do
             echo "Cleaning up PHP $version..."
 
-            for os in $ALL_OS; do
-              echo "  Removing files for $version on $os"
-
-              # Remove archive
-              aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/php-$version-$os.tar.xz \
-                --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null || echo "    php-$version-$os.tar.xz not found"
+            aws s3api list-objects-v2 \
+              --bucket ${{ secrets.R2_BUCKET_NAME }} \
+              --prefix "php-$version-" \
+              --endpoint-url ${{ secrets.R2_ENDPOINT }} \
+              --query 'Contents[].Key' \
+              --output text | \
+            while read -r file_key; do
+              if [ "$file_key" != "None" ] && [ -n "$file_key" ]; then
+                echo "  Deleting: $file_key"
+                aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/"$file_key" \
+                  --endpoint-url ${{ secrets.R2_ENDPOINT }} || echo "  Failed to delete $file_key"
+              fi
             done
           done
 
-          # Remove EOL versions from metadata.json
-          if aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata.json metadata.json --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null; then
+          # Remove EOL versions from metadata-php.json
+          if aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata-php.json metadata-php.json --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null; then
             python3 .github/scripts/php_build_manager.py cleanup-eol \
               --eol-versions '${{ needs.check-and-sync.outputs.eol-versions }}'
-            aws s3 cp metadata.json s3://${{ secrets.R2_BUCKET_NAME }}/metadata.json --endpoint-url ${{ secrets.R2_ENDPOINT }}
-            echo "Updated metadata.json after EOL cleanup"
+            aws s3 cp metadata-php.json s3://${{ secrets.R2_BUCKET_NAME }}/metadata-php.json --endpoint-url ${{ secrets.R2_ENDPOINT }}
+            echo "Updated metadata-php.json after EOL cleanup"
           fi
