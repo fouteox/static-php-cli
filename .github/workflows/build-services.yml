@@ -172,7 +172,7 @@ jobs:
           fi
 
           TIMESTAMP="${{ steps.timestamp.outputs.timestamp }}"
-          ARCHIVE_NAME="${SERVICE}-${VERSION}-macos-${ARCH}-${TIMESTAMP}.tar.xz"
+          ARCHIVE_NAME="${SERVICE}-${VERSION}-${TIMESTAMP}.tar.xz"
           cp "$ORIGINAL_ARCHIVE" "$ARCHIVE_NAME"
 
           echo "Uploading: $ARCHIVE_NAME ($(du -h "$ARCHIVE_NAME" | cut -f1))"
@@ -284,25 +284,17 @@ jobs:
 
             echo "  Current file: $CURRENT_FILENAME"
 
-            # List all files for this service-major pattern and delete all except the current one
+            # List all files for this service-major and delete all except the current one
             aws s3api list-objects-v2 \
               --bucket ${{ secrets.R2_BUCKET_NAME }} \
-              --prefix "${service}-" \
+              --prefix "${service}-${major}." \
               --endpoint-url ${{ secrets.R2_ENDPOINT }} \
               --query 'Contents[].Key' \
               --output text | tr '\t' '\n' | while read -r file_key; do
-
-              # Check if this file matches the service-major pattern
-              if [[ "$file_key" =~ ^${service}-[0-9]+\. ]] && [[ "$file_key" =~ -macos-.*\.tar\.xz$ ]]; then
-                # Extract version from filename to check if it matches our major version
-                file_version=$(echo "$file_key" | sed -E "s/^${service}-([0-9]+(\.[0-9]+){1,2})-.*/\1/")
-                file_major=$(echo "$file_version" | cut -d. -f1)
-
-                if [[ "$file_major" == "$major" ]] && [[ "$file_key" != "$CURRENT_FILENAME" ]]; then
-                  echo "  Deleting old build: $file_key"
-                  aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/"$file_key" \
-                    --endpoint-url ${{ secrets.R2_ENDPOINT }} || echo "  Failed to delete $file_key"
-                fi
+              if [[ "$file_key" != "$CURRENT_FILENAME" ]] && [[ "$file_key" != "None" ]] && [[ -n "$file_key" ]]; then
+                echo "  Deleting old build: $file_key"
+                aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/"$file_key" \
+                  --endpoint-url ${{ secrets.R2_ENDPOINT }} || echo "  Failed to delete $file_key"
               fi
             done
           done
