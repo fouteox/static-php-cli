@@ -195,14 +195,14 @@ jobs:
           echo "✓ SHA-256: $CHECKSUM_HEX"
 
           # Save checksum info (format: service,version,major,sha256,filename)
-          echo "${SERVICE},${VERSION},${MAJOR},${CHECKSUM_HEX},${ARCHIVE_NAME}" > checksum-output.txt
+          echo "${SERVICE},${VERSION},${MAJOR},${CHECKSUM_HEX},${ARCHIVE_NAME}" > checksum-${SERVICE}-${VERSION}.txt
           echo "Checksum saved: ${SERVICE},${VERSION},${MAJOR},${CHECKSUM_HEX},${ARCHIVE_NAME}"
 
       - name: "Upload checksum info"
         uses: actions/upload-artifact@v4
         with:
           name: checksum-${{ matrix.service }}-${{ matrix.version }}
-          path: checksum-output.txt
+          path: checksum-${{ matrix.service }}-${{ matrix.version }}.txt
           retention-days: 1
 
   update-metadata:
@@ -235,7 +235,7 @@ jobs:
       - name: "Update metadata"
         run: |
           # Consolidate all checksums from successful builds
-          ALL_CHECKSUMS=$(cat checksum-output.txt 2>/dev/null | grep -v "^$")
+          ALL_CHECKSUMS=$(cat checksum-*.txt 2>/dev/null | grep -v "^$")
 
           # Update metadata (format: service,version,major,sha256,filename)
           echo "$ALL_CHECKSUMS" | .github/scripts/services-metadata-manager.sh update-metadata
