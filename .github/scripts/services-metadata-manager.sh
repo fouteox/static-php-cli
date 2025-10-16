@@ -140,11 +140,14 @@ check_versions() {
         echo "should-build=false" >> "${GITHUB_OUTPUT:-/dev/stdout}"
         log_info "No builds needed"
     else
+        # Sort matrix: MySQL first (slowest build), then others alphabetically
         local matrix_items_str
-        matrix_items_str=$(printf '%s,' "${matrix_items[@]}" | sed 's/,$//')
+        matrix_items_str=$(printf '%s\n' "${matrix_items[@]}" | \
+            jq -s 'sort_by(.service) | sort_by(if .service == "mysql" then 0 else 1 end)' | \
+            jq -c '.[]' | tr '\n' ',' | sed 's/,$//')
         matrix_json=$(echo "{\"include\": [$matrix_items_str]}" | jq -c)
         echo "should-build=true" >> "${GITHUB_OUTPUT:-/dev/stdout}"
-        log_info "Build matrix generated with ${#matrix_items[@]} items"
+        log_info "Build matrix generated with ${#matrix_items[@]} items (MySQL prioritized)"
     fi
 
     echo "build-matrix=$matrix_json" >> "${GITHUB_OUTPUT:-/dev/stdout}"
@@ -191,7 +194,6 @@ update_metadata() {
             '.[$service][$major] = {
                 "latest": $latest,
                 "sha256": $sha256,
-                "checksumType": "sha256",
                 "filename": $filename
             }')
     done <<< "$checksums_input"
