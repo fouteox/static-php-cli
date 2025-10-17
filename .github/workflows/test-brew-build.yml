@@ -21,6 +21,10 @@ jobs:
       - name: "Checkout"
         uses: actions/checkout@v5
 
+      - name: "Update Homebrew"
+        run: |
+          brew update
+
       - name: "Download metadata-services.json from R2"
         id: download-metadata
         run: |
@@ -58,6 +62,10 @@ jobs:
       - name: "Checkout"
         uses: actions/checkout@v5
 
+      - name: "Update Homebrew"
+        run: |
+          brew update
+
       - name: "Import Apple Code Signing Certificate"
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
@@ -93,13 +101,14 @@ jobs:
           SERVICE="${{ matrix.service }}"
           VERSION="${{ matrix.version }}"
           MAJOR="${{ matrix.major }}"
-          ARCH=$(uname -m)
           ARCHIVE_NAME="${SERVICE}-${VERSION}.tar.gz"
 
           if [[ ! -f "$ARCHIVE_NAME" ]]; then
             echo "[ERROR] Archive not found: $ARCHIVE_NAME"
             exit 1
           fi
+
+          echo "Found archive: $ARCHIVE_NAME"
 
           echo "Uploading: $ARCHIVE_NAME ($(du -h "$ARCHIVE_NAME" | cut -f1))"
 
