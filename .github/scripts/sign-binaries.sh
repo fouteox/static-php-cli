@@ -21,8 +21,6 @@ fi
 BUNDLE_DIR=$(cd "$BUNDLE_DIR" && pwd)
 
 echo "==> Code Signing: $BUNDLE_DIR" >&2
-echo "    Identity: [Developer ID - redacted for security]" >&2
-echo "" >&2
 
 sign_file() {
     file="$1"
@@ -63,16 +61,13 @@ VERIFY_FILE="/tmp/verify_counter_$$"
 echo "0" > "$COUNTER_FILE"
 echo "0" > "$VERIFY_FILE"
 
-echo "==> Signing library modules and subdirectory binaries (deepest first)" >&2
 find "$BUNDLE_DIR/lib" -mindepth 2 -type f 2>/dev/null | while read -r module; do
     if sign_file "$module"; then
         count=$(cat "$COUNTER_FILE")
         echo "$((count + 1))" > "$COUNTER_FILE"
     fi
 done
-echo "" >&2
 
-echo "==> Signing libraries" >&2
 if [ -d "$BUNDLE_DIR/lib" ]; then
     find "$BUNDLE_DIR/lib" -maxdepth 1 -name "*.dylib" -type f 2>/dev/null | while read -r dylib; do
         if sign_file "$dylib"; then
@@ -81,9 +76,7 @@ if [ -d "$BUNDLE_DIR/lib" ]; then
         fi
     done
 fi
-echo "" >&2
 
-echo "==> Signing binaries" >&2
 if [ -d "$BUNDLE_DIR/bin" ]; then
     find "$BUNDLE_DIR/bin" -type f 2>/dev/null | while read -r binary; do
         if sign_file "$binary"; then
@@ -92,13 +85,9 @@ if [ -d "$BUNDLE_DIR/bin" ]; then
         fi
     done
 fi
-echo "" >&2
 
 SIGNED_COUNT=$(cat "$COUNTER_FILE")
 echo "    Total signed: $SIGNED_COUNT files" >&2
-echo "" >&2
-
-echo "==> Verification" >&2
 find "$BUNDLE_DIR/bin" "$BUNDLE_DIR/lib" -type f 2>/dev/null | while read -r file; do
     if ! verify_signature "$file"; then
         count=$(cat "$VERIFY_FILE")
@@ -115,17 +104,3 @@ else
 fi
 
 rm -f "$COUNTER_FILE" "$VERIFY_FILE"
-
-echo "" >&2
-echo "==> Summary:" >&2
-echo "    Bundle: $BUNDLE_DIR" >&2
-echo "    Code signing complete" >&2
-echo "" >&2
-
-echo "==> Testing: Display signature of main binary" >&2
-MAIN_BINARY=$(find "$BUNDLE_DIR/bin" -type f -perm +111 2>/dev/null | head -1)
-if [ -n "$MAIN_BINARY" ]; then
-    echo "    Binary: $(basename "$MAIN_BINARY")" >&2
-    codesign --display --verbose=2 "$MAIN_BINARY" 2>&1 | head -10
-fi
-echo "" >&2

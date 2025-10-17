@@ -91,7 +91,6 @@ while IFS= read -r module; do
 done < "$MODULES_TMP"
 
 echo "    Relocated $BIN_COUNT binaries, $LIB_COUNT libraries, $MODULE_COUNT modules" >&2
-echo "" >&2
 
 VERIFY_TMP="/tmp/verify_placeholders_$$"
 rm -f "$VERIFY_TMP"
@@ -112,4 +111,3 @@ else
 fi
 
 rm -f "$VERIFY_TMP"
-echo "" >&2

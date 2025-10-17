@@ -25,13 +25,8 @@ brew fetch --force-bottle "$FORMULA" >/dev/null 2>&1
 BOTTLE_PATH=$(brew --cache --force-bottle "$FORMULA")
 echo "$BOTTLE_PATH" >> "$OUTPUT_FILE"
 
-DEP_COUNT=$(wc -l < "$DEPS_FILE" | tr -d ' ')
-
-CURRENT=0
 while IFS= read -r dep; do
     [ -z "$dep" ] && continue
-    CURRENT=$((CURRENT + 1))
-    echo "    [$CURRENT/$DEP_COUNT] $dep" >&2
 
     brew fetch --force-bottle "$dep" >/dev/null 2>&1
     BOTTLE_PATH=$(brew --cache --force-bottle "$dep")
@@ -40,4 +35,3 @@ done < "$DEPS_FILE"
 
 TOTAL=$(wc -l < "$OUTPUT_FILE" | tr -d ' ')
 echo "    Fetched $TOTAL bottles" >&2
-echo "" >&2

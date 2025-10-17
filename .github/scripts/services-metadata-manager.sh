@@ -108,8 +108,6 @@ check_versions() {
 
     # Iterate over all services
     for service in $services_to_check; do
-        log_info "Checking $service..."
-
         # Get supported major versions for this service
         local major_versions
         major_versions=$(get_supported_versions "$service")
@@ -127,20 +125,19 @@ check_versions() {
             # Compare versions
             if [[ "$api_latest" != "$metadata_latest" ]]; then
                 if [[ -z "$metadata_latest" ]]; then
-                    log_info "  New: ${service} ${major} -> ${api_latest}"
+                    log_info "New: ${service} ${major} -> ${api_latest}"
                 else
-                    log_info "  Update: ${service} ${major} -> ${api_latest} (was: ${metadata_latest})"
+                    log_info "Update: ${service} ${major} -> ${api_latest} (was: ${metadata_latest})"
                 fi
 
                 # Check Homebrew availability (single call)
-                brew_formula=$(bash "${SCRIPT_DIR}/../../check-brew-version.sh" "$service" "$api_latest" 2>/dev/null)
+                brew_formula=$(bash "${SCRIPT_DIR}/check-brew-version.sh" "$service" "$api_latest" 2>/dev/null)
 
                 if [[ $? -eq 0 && -n "$brew_formula" ]]; then
-                    log_info "  → Brew formula: $brew_formula"
                     # Add to build matrix with resolved formula
                     matrix_items+=("{\"service\": \"$service\", \"version\": \"$api_latest\", \"major\": \"$major\", \"formula\": \"$brew_formula\"}")
                 else
-                    log_info "  ⊘ Skip: not available in Homebrew"
+                    log_info "Skip: $service $major (not available in Homebrew)"
                 fi
             fi
         done
@@ -164,7 +161,6 @@ check_versions() {
     fi
 
     echo "build-matrix=$matrix_json" >> "${GITHUB_OUTPUT:-/dev/stdout}"
-    log_info "Check versions completed"
 }
 
 # ================================
@@ -172,15 +168,10 @@ check_versions() {
 # ================================
 
 update_metadata() {
-    log_info "Updating metadata..."
-
     # Load existing metadata or create new
     local metadata='{}'
     if [[ -f "$METADATA_FILE" ]]; then
         metadata=$(cat "$METADATA_FILE")
-        log_info "Loaded existing metadata"
-    else
-        log_info "Creating new metadata"
     fi
 
     # Read checksums from stdin (format: service,version,major,sha256,filename)
@@ -194,8 +185,6 @@ update_metadata() {
     # Process each checksum line
     while IFS=',' read -r service version major sha256 filename; do
         [[ -z "$service" ]] && continue
-
-        log_info "  Updating $service $major ($version)"
 
         # Update metadata using jq
         metadata=$(echo "$metadata" | jq -c \
@@ -213,7 +202,7 @@ update_metadata() {
 
     # Save updated metadata
     echo "$metadata" | jq '.' > "$METADATA_FILE"
-    log_info "Metadata updated successfully: $METADATA_FILE"
+    log_info "Metadata updated: $METADATA_FILE"
 }
 
 # ================================

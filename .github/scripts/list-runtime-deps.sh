@@ -61,4 +61,3 @@ sort -u "$ALL_DEPS" > "$OUTPUT_FILE"
 TOTAL=$(wc -l < "$OUTPUT_FILE" | tr -d ' ')
 
 echo "    Found $TOTAL runtime dependencies" >&2
-echo "" >&2

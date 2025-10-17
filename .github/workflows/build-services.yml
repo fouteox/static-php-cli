@@ -7,12 +7,11 @@ on:
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  OPENSSL_MAJOR_MINOR: "3.5"
 
 jobs:
   check-and-sync:
     name: "Check service versions and sync"
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     outputs:
       build-matrix: ${{ steps.check.outputs.build-matrix }}
       should-build: ${{ steps.check.outputs.should-build }}
@@ -24,14 +23,17 @@ jobs:
       - name: "Checkout"
         uses: actions/checkout@v5
 
+      - name: "Update Homebrew"
+        run: |
+          echo "Updating Homebrew..."
+          brew update >/dev/null 2>&1
+          echo "✓ Homebrew updated"
+
       - name: "Download metadata-services.json from R2"
         id: download-metadata
         run: |
-          if aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata-services.json metadata-services.json --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null; then
-            echo "Downloaded existing metadata-services.json"
-          else
+          if ! aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata-services.json metadata-services.json --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null; then
             echo "{}" > metadata-services.json
-            echo "Created empty metadata-services.json"
           fi
 
       - name: "Check versions and generate build matrix"
@@ -39,78 +41,18 @@ jobs:
         run: |
           .github/scripts/services-metadata-manager.sh check-versions
 
-  resolve-openssl:
-    name: "Resolve OpenSSL version"
-    runs-on: ubuntu-latest
-    needs: [check-and-sync]
-    if: needs.check-and-sync.outputs.should-build == 'true'
-    outputs:
-      openssl-version: ${{ steps.resolve.outputs.version }}
-    steps:
-      - name: "Resolve latest OpenSSL ${{ env.OPENSSL_MAJOR_MINOR }}"
-        id: resolve
-        run: |
-          MAJOR_MINOR="${{ env.OPENSSL_MAJOR_MINOR }}"
-          LATEST=$(curl -s "https://endoflife.date/api/openssl.json" | \
-            jq -r ".[] | select(.cycle == \"$MAJOR_MINOR\") | .latest")
-
-          if [[ -z "$LATEST" || "$LATEST" == "null" ]]; then
-            echo "Failed to resolve OpenSSL version for $MAJOR_MINOR"
-            exit 1
-          fi
-
-          echo "version=$LATEST" >> $GITHUB_OUTPUT
-          echo "Resolved OpenSSL $MAJOR_MINOR -> $LATEST"
-
-  build-openssl:
-    name: "Build OpenSSL ${{ needs.resolve-openssl.outputs.openssl-version }}"
-    runs-on: macos-latest
-    needs: [resolve-openssl]
-    steps:
-      - name: "Checkout"
-        uses: actions/checkout@v5
-
-      - name: "Cache OpenSSL build"
-        id: cache-openssl
-        uses: actions/cache@v4
-        with:
-          path: /tmp/openssl-static
-          key: openssl-${{ needs.resolve-openssl.outputs.openssl-version }}-macos-arm64
-
-      - name: "Build OpenSSL ${{ needs.resolve-openssl.outputs.openssl-version }}"
-        if: steps.cache-openssl.outputs.cache-hit != 'true'
-        run: |
-          OPENSSL_DIR="/tmp/openssl-static"
-          OPENSSL_VERSION="${{ needs.resolve-openssl.outputs.openssl-version }}"
-          mkdir -p "$OPENSSL_DIR"
-
-          curl -fsSL -o "openssl-${OPENSSL_VERSION}.tar.gz" "https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz"
-          tar xzf "openssl-${OPENSSL_VERSION}.tar.gz"
-          cd "openssl-${OPENSSL_VERSION}"
-
-          ./Configure darwin64-arm64-cc \
-            --prefix="$OPENSSL_DIR" \
-            --openssldir="$OPENSSL_DIR" \
-            shared \
-            no-tests \
-            no-docs \
-            no-atexit
-
-          make
-          make install_sw
-
   build-service:
     name: "Build ${{ matrix.service }} ${{ matrix.version }}"
     runs-on: macos-latest
-    needs: [check-and-sync, resolve-openssl, build-openssl]
+    needs: [check-and-sync]
     if: needs.check-and-sync.outputs.should-build == 'true'
-    timeout-minutes: 240
+    timeout-minutes: 60
     continue-on-error: true
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: us-east-1
-      PREBUILT_OPENSSL_DIR: /tmp/openssl-static
+      SIGNING_IDENTITY: ${{ secrets.SIGNING_IDENTITY }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.check-and-sync.outputs.build-matrix) }}
@@ -118,64 +60,59 @@ jobs:
       - name: "Checkout"
         uses: actions/checkout@v5
 
-      - name: "Restore OpenSSL from cache"
-        uses: actions/cache@v4
-        with:
-          path: /tmp/openssl-static
-          key: openssl-${{ needs.resolve-openssl.outputs.openssl-version }}-macos-arm64
-
-      - name: "Setup dependencies"
+      - name: "Update Homebrew"
         run: |
-          # Function to install Homebrew packages only if not already installed
-          brew_install_if_missing() {
-            for package in "$@"; do
-              if ! brew list --formula "$package" >/dev/null 2>&1; then
-                echo "Installing $package..."
-                brew install "$package"
-              else
-                echo "$package is already installed, skipping"
-              fi
-            done
-          }
+          echo "Updating Homebrew..."
+          brew update >/dev/null 2>&1
+          echo "✓ Homebrew updated"
 
-          # MySQL and MariaDB need bison and ninja
-          if [[ "${{ matrix.service }}" == "mysql" || "${{ matrix.service }}" == "mariadb" ]]; then
-            brew_install_if_missing bison pkg-config ninja
-          fi
-
-          # Redis and Valkey need GNU tools and Rust
-          if [[ "${{ matrix.service }}" == "redis" || "${{ matrix.service }}" == "valkey" ]]; then
-            brew_install_if_missing coreutils make llvm@18 cmake gnu-sed automake libtool wget rust
-          fi
-
-      - name: "Generate Build Timestamp"
-        id: timestamp
+      - name: "Import Apple Code Signing Certificate"
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          echo "timestamp=$(date -u +"%Y%m%d%H%M%S")" >> $GITHUB_OUTPUT
+          # Decode certificate
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $RUNNER_TEMP/build_certificate.p12
 
-      - name: "Build ${{ matrix.service }}"
+          # Create temporary keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/app-signing.keychain-db
+
+          # Set as default keychain (CRITICAL for codesign to find identity)
+          security default-keychain -s $RUNNER_TEMP/app-signing.keychain-db
+
+          security set-keychain-settings -lut 21600 $RUNNER_TEMP/app-signing.keychain-db
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/app-signing.keychain-db
+
+          # Import certificate with explicit codesign access
+          security import $RUNNER_TEMP/build_certificate.p12 \
+            -P "$P12_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k $RUNNER_TEMP/app-signing.keychain-db \
+            -T /usr/bin/codesign
+
+          security list-keychain -d user -s $RUNNER_TEMP/app-signing.keychain-db
+
+          # Allow codesign to access keychain without password prompt
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/app-signing.keychain-db
+
+      - name: "Build ${{ matrix.service }} via Homebrew"
         run: |
-          .github/scripts/service-build.sh ${{ matrix.service }} ${{ matrix.version }}
+          .github/scripts/create-portable-package.sh "${{ matrix.formula }}" 2>&1 | tail -5
 
       - name: "Upload archive to R2 with SHA-256 checksum"
         run: |
           SERVICE="${{ matrix.service }}"
           VERSION="${{ matrix.version }}"
           MAJOR="${{ matrix.major }}"
-          ARCH=$(uname -m)
-          WORKDIR="$HOME/fadogen-build/${SERVICE}-${VERSION}"
-          ORIGINAL_ARCHIVE="$WORKDIR/${SERVICE}-${VERSION}-macos-${ARCH}.tar.xz"
+          ARCHIVE_NAME="${SERVICE}-${VERSION}.tar.gz"
 
-          if [[ ! -f "$ORIGINAL_ARCHIVE" ]]; then
-            echo "[ERROR] Archive not found: $ORIGINAL_ARCHIVE"
+          if [[ ! -f "$ARCHIVE_NAME" ]]; then
+            echo "[ERROR] Archive not found: $ARCHIVE_NAME"
             exit 1
           fi
-
-          TIMESTAMP="${{ steps.timestamp.outputs.timestamp }}"
-          ARCHIVE_NAME="${SERVICE}-${VERSION}-${TIMESTAMP}.tar.xz"
-          cp "$ORIGINAL_ARCHIVE" "$ARCHIVE_NAME"
-
-          echo "Uploading: $ARCHIVE_NAME ($(du -h "$ARCHIVE_NAME" | cut -f1))"
 
           # Upload with native SHA-256 checksum (captures checksum in response)
           UPLOAD_RESULT=$(aws s3api put-object \
@@ -191,12 +128,10 @@ jobs:
           CHECKSUM_BASE64=$(echo "$UPLOAD_RESULT" | jq -r '.ChecksumSHA256')
           CHECKSUM_HEX=$(echo "$CHECKSUM_BASE64" | base64 -d | xxd -p -c 256)
 
-          echo "✓ Uploaded: $ARCHIVE_NAME"
-          echo "✓ SHA-256: $CHECKSUM_HEX"
+          echo "✓ Uploaded $ARCHIVE_NAME (SHA-256: $CHECKSUM_HEX)"
 
           # Save checksum info (format: service,version,major,sha256,filename)
           echo "${SERVICE},${VERSION},${MAJOR},${CHECKSUM_HEX},${ARCHIVE_NAME}" > checksum-${SERVICE}-${VERSION}.txt
-          echo "Checksum saved: ${SERVICE},${VERSION},${MAJOR},${CHECKSUM_HEX},${ARCHIVE_NAME}"
 
       - name: "Upload checksum info"
         uses: actions/upload-artifact@v4
@@ -204,6 +139,12 @@ jobs:
           name: checksum-${{ matrix.service }}-${{ matrix.version }}
           path: checksum-${{ matrix.service }}-${{ matrix.version }}.txt
           retention-days: 1
+
+      - name: "Cleanup Keychain"
+        if: always()
+        run: |
+          security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true
+          rm -f $RUNNER_TEMP/build_certificate.p12 || true
 
   update-metadata:
     name: "Update metadata-services.json"
@@ -219,11 +160,8 @@ jobs:
 
       - name: "Download metadata-services.json from R2"
         run: |
-          if aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata-services.json metadata-services.json --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null; then
-            echo "Downloaded existing metadata-services.json"
-          else
+          if ! aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata-services.json metadata-services.json --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null; then
             echo "{}" > metadata-services.json
-            echo "Created empty metadata-services.json"
           fi
 
       - name: "Download all checksum artifacts"
@@ -240,14 +178,10 @@ jobs:
           # Update metadata (format: service,version,major,sha256,filename)
           echo "$ALL_CHECKSUMS" | .github/scripts/services-metadata-manager.sh update-metadata
 
-          # Display updated metadata
-          echo "=== Updated metadata-services.json ==="
-          cat metadata-services.json
-
       - name: "Upload metadata-services.json to R2"
         run: |
-          aws s3 cp metadata-services.json s3://${{ secrets.R2_BUCKET_NAME }}/metadata-services.json --endpoint-url ${{ secrets.R2_ENDPOINT }}
-          echo "Uploaded metadata-services.json to R2"
+          aws s3 cp metadata-services.json s3://${{ secrets.R2_BUCKET_NAME }}/metadata-services.json --endpoint-url ${{ secrets.R2_ENDPOINT }} >/dev/null
+          echo "✓ Metadata updated"
 
   cleanup-old-builds:
     name: "Cleanup old service builds"
@@ -263,26 +197,18 @@ jobs:
 
       - name: "Download updated metadata-services.json from R2"
         run: |
-          aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata-services.json metadata-services.json --endpoint-url ${{ secrets.R2_ENDPOINT }}
-          echo "Downloaded updated metadata-services.json"
+          aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata-services.json metadata-services.json --endpoint-url ${{ secrets.R2_ENDPOINT }} >/dev/null
 
       - name: "Cleanup old builds"
         run: |
-          echo "Starting cleanup of old service builds..."
-
           # Extract service-major pairs from metadata (only successful builds are in metadata)
           jq -r 'to_entries[] | .key as $service | .value | to_entries[] | "\($service),\(.key)"' metadata-services.json | sort -u | while IFS=',' read -r service major; do
-            echo "Cleaning up old builds for $service major version $major..."
-
             # Get the current filename from metadata
             CURRENT_FILENAME=$(jq -r ".\"$service\".\"$major\".filename // \"\"" metadata-services.json)
 
             if [[ -z "$CURRENT_FILENAME" ]]; then
-              echo "  No current filename found in metadata for $service $major"
               continue
             fi
-
-            echo "  Current file: $CURRENT_FILENAME"
 
             # List all files for this service-major and delete all except the current one
             aws s3api list-objects-v2 \
@@ -290,13 +216,11 @@ jobs:
               --prefix "${service}-${major}." \
               --endpoint-url ${{ secrets.R2_ENDPOINT }} \
               --query 'Contents[].Key' \
-              --output text | tr '\t' '\n' | while read -r file_key; do
+              --output text 2>/dev/null | tr '\t' '\n' | while read -r file_key; do
               if [[ "$file_key" != "$CURRENT_FILENAME" ]] && [[ "$file_key" != "None" ]] && [[ -n "$file_key" ]]; then
-                echo "  Deleting old build: $file_key"
-                aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/"$file_key" \
-                  --endpoint-url ${{ secrets.R2_ENDPOINT }} || echo "  Failed to delete $file_key"
+                if aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/"$file_key" --endpoint-url ${{ secrets.R2_ENDPOINT }} >/dev/null 2>&1; then
+                  echo "✓ Deleted old build: $file_key"
+                fi
               fi
             done
           done
-
-          echo "Cleanup completed"

@@ -51,15 +51,8 @@ if [ -d "$OUTPUT_DIR/.bottle" ]; then
     rm -rf "$OUTPUT_DIR/.bottle"
 fi
 
-DEP_COUNT=$(tail -n +2 "$BOTTLES_FILE" | wc -l | tr -d ' ')
-
-CURRENT=0
 tail -n +2 "$BOTTLES_FILE" | while IFS= read -r bottle; do
     [ -z "$bottle" ] && continue
-    CURRENT=$((CURRENT + 1))
-
-    BOTTLE_NAME=$(basename "$bottle" | cut -d'-' -f3)
-    echo "    [$CURRENT/$DEP_COUNT] $BOTTLE_NAME" >&2
 
     rm -rf "${TEMP_DIR:?}"/*
     cd "$TEMP_DIR"
@@ -100,4 +93,3 @@ done
 BIN_COUNT=$(find "$OUTPUT_DIR/bin" -type f 2>/dev/null | wc -l | tr -d ' ')
 LIB_COUNT=$(find "$OUTPUT_DIR/lib" -name "*.dylib" 2>/dev/null | wc -l | tr -d ' ')
 echo "    Extracted $BIN_COUNT binaries, $LIB_COUNT libraries" >&2
-echo "" >&2
