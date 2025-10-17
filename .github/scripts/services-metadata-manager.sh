@@ -99,8 +99,15 @@ check_versions() {
     # Build matrix array
     local matrix_items=()
 
+    # Filter services if FILTER_SERVICE is set
+    local services_to_check="$AVAILABLE_SERVICES"
+    if [[ -n "${FILTER_SERVICE:-}" ]]; then
+        services_to_check="$FILTER_SERVICE"
+        log_info "Filtering for service: $FILTER_SERVICE"
+    fi
+
     # Iterate over all services
-    for service in $AVAILABLE_SERVICES; do
+    for service in $services_to_check; do
         log_info "Checking $service..."
 
         # Get supported major versions for this service

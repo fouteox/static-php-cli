@@ -33,27 +33,11 @@ jobs:
 
       - name: "Check versions and generate build matrix"
         id: check
+        env:
+          FILTER_SERVICE: valkey
         run: |
-          # Generate full matrix
+          # Generate matrix for valkey only
           .github/scripts/services-metadata-manager.sh check-versions
-
-          # Filter for valkey only (test mode)
-          FULL_MATRIX=$(cat <<'EOF'
-          ${{ steps.check.outputs.build-matrix }}
-          EOF
-          )
-
-          FILTERED_MATRIX=$(echo "$FULL_MATRIX" | jq '.include |= map(select(.service == "valkey"))')
-
-          if [[ "$(echo "$FILTERED_MATRIX" | jq '.include | length')" -eq 0 ]]; then
-            echo "should-build=false" >> $GITHUB_OUTPUT
-            echo "build-matrix={\"include\":[]}" >> $GITHUB_OUTPUT
-            echo "No valkey builds needed"
-          else
-            echo "should-build=true" >> $GITHUB_OUTPUT
-            echo "build-matrix=$FILTERED_MATRIX" >> $GITHUB_OUTPUT
-            echo "Valkey builds filtered: $(echo "$FILTERED_MATRIX" | jq -c)"
-          fi
 
   build-service:
     name: "Build ${{ matrix.service }} ${{ matrix.version }}"
