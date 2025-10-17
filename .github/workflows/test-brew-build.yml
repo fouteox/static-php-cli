@@ -9,7 +9,7 @@ env:
 jobs:
   check-and-sync:
     name: "Check service versions and sync"
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     outputs:
       build-matrix: ${{ steps.check.outputs.build-matrix }}
       should-build: ${{ steps.check.outputs.should-build }}
