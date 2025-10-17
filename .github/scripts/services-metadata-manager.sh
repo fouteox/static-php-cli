@@ -125,8 +125,16 @@ check_versions() {
                     log_info "  Update: ${service} ${major} -> ${api_latest} (was: ${metadata_latest})"
                 fi
 
-                # Add to build matrix
-                matrix_items+=("{\"service\": \"$service\", \"version\": \"$api_latest\", \"major\": \"$major\"}")
+                # Check Homebrew availability (single call)
+                brew_formula=$(bash "${SCRIPT_DIR}/../../check-brew-version.sh" "$service" "$api_latest" 2>/dev/null)
+
+                if [[ $? -eq 0 && -n "$brew_formula" ]]; then
+                    log_info "  → Brew formula: $brew_formula"
+                    # Add to build matrix with resolved formula
+                    matrix_items+=("{\"service\": \"$service\", \"version\": \"$api_latest\", \"major\": \"$major\", \"formula\": \"$brew_formula\"}")
+                else
+                    log_info "  Skip: not available in Homebrew"
+                fi
             else
                 log_info "  OK: ${service} ${major} = ${api_latest}"
             fi
