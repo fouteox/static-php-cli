@@ -77,20 +77,30 @@ jobs:
 
           # Create temporary keychain
           security create-keychain -p "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/app-signing.keychain-db
+
+          # Set as default keychain (CRITICAL for codesign to find identity)
+          security default-keychain -s $RUNNER_TEMP/app-signing.keychain-db
+
           security set-keychain-settings -lut 21600 $RUNNER_TEMP/app-signing.keychain-db
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/app-signing.keychain-db
 
-          # Import certificate
-          security import $RUNNER_TEMP/build_certificate.p12 -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $RUNNER_TEMP/app-signing.keychain-db
+          # Import certificate with explicit codesign access
+          security import $RUNNER_TEMP/build_certificate.p12 \
+            -P "$P12_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k $RUNNER_TEMP/app-signing.keychain-db \
+            -T /usr/bin/codesign
+
           security list-keychain -d user -s $RUNNER_TEMP/app-signing.keychain-db
 
-          # Allow codesign to access keychain
+          # Allow codesign to access keychain without password prompt
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/app-signing.keychain-db
 
-      - name: "Generate Build Timestamp"
-        id: timestamp
-        run: |
-          echo "timestamp=$(date -u +"%Y%m%d%H%M%S")" >> $GITHUB_OUTPUT
+          # Verify identity is available
+          echo "Available code signing identities:"
+          security find-identity -v -p codesigning
 
       - name: "Build ${{ matrix.service }} via Homebrew"
         run: |
