@@ -19,38 +19,25 @@ fi
 rm -f "$OUTPUT_FILE"
 touch "$OUTPUT_FILE"
 
-echo "==> Fetching bottles for: $FORMULA" >&2
-echo "" >&2
+echo "==> Fetching bottles: $FORMULA" >&2
 
-echo "==> Fetching main formula: $FORMULA" >&2
-brew fetch --force-bottle "$FORMULA"
+brew fetch --force-bottle "$FORMULA" >/dev/null 2>&1
 BOTTLE_PATH=$(brew --cache --force-bottle "$FORMULA")
 echo "$BOTTLE_PATH" >> "$OUTPUT_FILE"
-echo "    Cached: $BOTTLE_PATH" >&2
-echo "" >&2
 
 DEP_COUNT=$(wc -l < "$DEPS_FILE" | tr -d ' ')
-echo "==> Fetching $DEP_COUNT dependencies" >&2
-echo "" >&2
 
 CURRENT=0
 while IFS= read -r dep; do
     [ -z "$dep" ] && continue
     CURRENT=$((CURRENT + 1))
-    echo "[$CURRENT/$DEP_COUNT] Fetching: $dep" >&2
+    echo "    [$CURRENT/$DEP_COUNT] $dep" >&2
 
-    brew fetch --force-bottle "$dep"
+    brew fetch --force-bottle "$dep" >/dev/null 2>&1
     BOTTLE_PATH=$(brew --cache --force-bottle "$dep")
     echo "$BOTTLE_PATH" >> "$OUTPUT_FILE"
-    echo "            Cached: $BOTTLE_PATH" >&2
 done < "$DEPS_FILE"
 
 TOTAL=$(wc -l < "$OUTPUT_FILE" | tr -d ' ')
-
-echo "" >&2
-echo "==> Summary:" >&2
-echo "    Formula: $FORMULA" >&2
-echo "    Dependencies: $DEP_COUNT" >&2
-echo "    Total bottles fetched: $TOTAL" >&2
-echo "    Bottle paths saved to: $OUTPUT_FILE" >&2
+echo "    Fetched $TOTAL bottles" >&2
 echo "" >&2

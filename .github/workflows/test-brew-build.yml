@@ -28,11 +28,8 @@ jobs:
       - name: "Download metadata-services.json from R2"
         id: download-metadata
         run: |
-          if aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata-services.json metadata-services.json --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null; then
-            echo "Downloaded existing metadata-services.json"
-          else
+          if ! aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata-services.json metadata-services.json --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null; then
             echo "{}" > metadata-services.json
-            echo "Created empty metadata-services.json"
           fi
 
       - name: "Check versions and generate build matrix"
@@ -118,10 +115,6 @@ jobs:
             exit 1
           fi
 
-          echo "Found archive: $ARCHIVE_NAME"
-
-          echo "Uploading: $ARCHIVE_NAME ($(du -h "$ARCHIVE_NAME" | cut -f1))"
-
           # Upload with native SHA-256 checksum (captures checksum in response)
           UPLOAD_RESULT=$(aws s3api put-object \
             --bucket ${{ secrets.R2_BUCKET_NAME }} \
@@ -136,12 +129,10 @@ jobs:
           CHECKSUM_BASE64=$(echo "$UPLOAD_RESULT" | jq -r '.ChecksumSHA256')
           CHECKSUM_HEX=$(echo "$CHECKSUM_BASE64" | base64 -d | xxd -p -c 256)
 
-          echo "✓ Uploaded: $ARCHIVE_NAME"
-          echo "✓ SHA-256: $CHECKSUM_HEX"
+          echo "✓ Uploaded $ARCHIVE_NAME (SHA-256: $CHECKSUM_HEX)"
 
           # Save checksum info (format: service,version,major,sha256,filename)
           echo "${SERVICE},${VERSION},${MAJOR},${CHECKSUM_HEX},${ARCHIVE_NAME}" > checksum-${SERVICE}-${VERSION}.txt
-          echo "Checksum saved: ${SERVICE},${VERSION},${MAJOR},${CHECKSUM_HEX},${ARCHIVE_NAME}"
 
       - name: "Upload checksum info"
         uses: actions/upload-artifact@v4
@@ -170,11 +161,8 @@ jobs:
 
       - name: "Download metadata-services.json from R2"
         run: |
-          if aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata-services.json metadata-services.json --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null; then
-            echo "Downloaded existing metadata-services.json"
-          else
+          if ! aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata-services.json metadata-services.json --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null; then
             echo "{}" > metadata-services.json
-            echo "Created empty metadata-services.json"
           fi
 
       - name: "Download all checksum artifacts"
@@ -191,14 +179,10 @@ jobs:
           # Update metadata (format: service,version,major,sha256,filename)
           echo "$ALL_CHECKSUMS" | .github/scripts/services-metadata-manager.sh update-metadata
 
-          # Display updated metadata
-          echo "=== Updated metadata-services.json ==="
-          cat metadata-services.json
-
       - name: "Upload metadata-services.json to R2"
         run: |
-          aws s3 cp metadata-services.json s3://${{ secrets.R2_BUCKET_NAME }}/metadata-services.json --endpoint-url ${{ secrets.R2_ENDPOINT }}
-          echo "Uploaded metadata-services.json to R2"
+          aws s3 cp metadata-services.json s3://${{ secrets.R2_BUCKET_NAME }}/metadata-services.json --endpoint-url ${{ secrets.R2_ENDPOINT }} >/dev/null
+          echo "✓ Metadata updated"
 
   cleanup-old-builds:
     name: "Cleanup old service builds"
@@ -214,28 +198,21 @@ jobs:
 
       - name: "Download updated metadata-services.json from R2"
         run: |
-          aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata-services.json metadata-services.json --endpoint-url ${{ secrets.R2_ENDPOINT }}
-          echo "Downloaded updated metadata-services.json"
+          aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata-services.json metadata-services.json --endpoint-url ${{ secrets.R2_ENDPOINT }} >/dev/null
 
       - name: "Cleanup old builds"
         run: |
-          echo "Starting cleanup of old service builds..."
-
           # Extract service-major pairs from metadata (only successful builds are in metadata)
           jq -r 'to_entries[] | .key as $service | .value | to_entries[] | "\($service),\(.key)"' metadata-services.json | sort -u | while IFS=',' read -r service major; do
-            echo "Cleaning up old builds for $service major version $major..."
-
             # Get the current filename from metadata
             CURRENT_FILENAME=$(jq -r ".\"$service\".\"$major\".filename // \"\"" metadata-services.json)
 
             if [[ -z "$CURRENT_FILENAME" ]]; then
-              echo "  No current filename found in metadata for $service $major"
               continue
             fi
 
-            echo "  Current file: $CURRENT_FILENAME"
-
             # List all files for this service-major and delete all except the current one
+            DELETED=0
             aws s3api list-objects-v2 \
               --bucket ${{ secrets.R2_BUCKET_NAME }} \
               --prefix "${service}-${major}." \
@@ -243,11 +220,9 @@ jobs:
               --query 'Contents[].Key' \
               --output text | tr '\t' '\n' | while read -r file_key; do
               if [[ "$file_key" != "$CURRENT_FILENAME" ]] && [[ "$file_key" != "None" ]] && [[ -n "$file_key" ]]; then
-                echo "  Deleting old build: $file_key"
-                aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/"$file_key" \
-                  --endpoint-url ${{ secrets.R2_ENDPOINT }} || echo "  Failed to delete $file_key"
+                aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/"$file_key" --endpoint-url ${{ secrets.R2_ENDPOINT }} >/dev/null 2>&1 && DELETED=$((DELETED + 1))
               fi
             done
-          done
 
-          echo "Cleanup completed"
+            [[ $DELETED -gt 0 ]] && echo "✓ Cleaned $DELETED old builds for $service $major"
+          done

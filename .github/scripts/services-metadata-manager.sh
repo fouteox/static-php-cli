@@ -140,10 +140,8 @@ check_versions() {
                     # Add to build matrix with resolved formula
                     matrix_items+=("{\"service\": \"$service\", \"version\": \"$api_latest\", \"major\": \"$major\", \"formula\": \"$brew_formula\"}")
                 else
-                    log_info "  Skip: not available in Homebrew"
+                    log_info "  ⊘ Skip: not available in Homebrew"
                 fi
-            else
-                log_info "  OK: ${service} ${major} = ${api_latest}"
             fi
         done
     done

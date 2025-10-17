@@ -25,9 +25,7 @@ fi
 BUNDLE_DIR="${SERVICE_NAME}-${VERSION}"
 ARCHIVE_NAME="${SERVICE_NAME}-${VERSION}.tar.gz"
 
-echo "╔════════════════════════════════════════════════════════════════╗" >&2
-echo "║  Creating Portable Package for: $FORMULA" >&2
-echo "╚════════════════════════════════════════════════════════════════╝" >&2
+echo "==> Creating portable package: $FORMULA ($VERSION)" >&2
 echo "" >&2
 
 if ! brew info "$FORMULA" >/dev/null 2>&1; then
@@ -87,29 +85,11 @@ fi
 echo "" >&2
 
 ARCHIVE_SIZE=$(du -sh "$ARCHIVE_NAME" | awk '{print $1}')
-BUNDLE_SIZE=$(du -sh "$BUNDLE_DIR" | awk '{print $1}')
 BIN_COUNT=$(find "$BUNDLE_DIR/bin" -type f 2>/dev/null | wc -l | tr -d ' ')
 LIB_COUNT=$(find "$BUNDLE_DIR/lib" -name "*.dylib" -type f 2>/dev/null | wc -l | tr -d ' ')
 
-echo "╔════════════════════════════════════════════════════════════════╗" >&2
-echo "║  Package Created Successfully" >&2
-echo "╚════════════════════════════════════════════════════════════════╝" >&2
-echo "" >&2
-echo "Formula:           $FORMULA" >&2
-echo "Archive:           $ARCHIVE_NAME" >&2
-echo "Archive size:      $ARCHIVE_SIZE" >&2
-echo "Extracted size:    $BUNDLE_SIZE" >&2
-echo "Binaries:          $BIN_COUNT" >&2
-echo "Libraries:         $LIB_COUNT" >&2
-echo "" >&2
-echo "Bundle directory:  $BUNDLE_DIR/" >&2
-echo "Temp files:        /tmp/${FORMULA}_*" >&2
-echo "" >&2
-echo "To test the package:" >&2
-echo "  tar -xzf $ARCHIVE_NAME" >&2
-echo "  cd $BUNDLE_DIR" >&2
-echo "  ./bin/<binary> --version" >&2
-echo "" >&2
-echo "To clean up:" >&2
-echo "  rm -rf $BUNDLE_DIR /tmp/${FORMULA}_*" >&2
+echo "==> Package created successfully" >&2
+echo "    Formula: $FORMULA" >&2
+echo "    Archive: $ARCHIVE_NAME ($ARCHIVE_SIZE)" >&2
+echo "    Binaries: $BIN_COUNT | Libraries: $LIB_COUNT" >&2
 echo "" >&2

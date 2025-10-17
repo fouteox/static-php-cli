@@ -16,8 +16,7 @@ fi
 
 BUNDLE_DIR=$(cd "$BUNDLE_DIR" && pwd)
 
-echo "==> Relocating binaries in: $BUNDLE_DIR" >&2
-echo "" >&2
+echo "==> Relocating binaries: $BUNDLE_DIR" >&2
 
 relocate_file() {
     file="$1"
@@ -38,37 +37,45 @@ relocate_file() {
     done
 }
 
-echo "==> Relocating binaries" >&2
+# Use temp files for POSIX sh compatibility
+BINARIES_TMP="/tmp/binaries_$$"
+DYLIBS_TMP="/tmp/dylibs_$$"
+MODULES_TMP="/tmp/modules_$$"
+
+cleanup() {
+    rm -f "$BINARIES_TMP" "$DYLIBS_TMP" "$MODULES_TMP"
+}
+trap cleanup EXIT
+
 BIN_COUNT=0
 if [ -d "$BUNDLE_DIR/bin" ]; then
-    find "$BUNDLE_DIR/bin" -type f 2>/dev/null | while read -r binary; do
-        if file "$binary" | grep -q "Mach-O"; then
+    find "$BUNDLE_DIR/bin" -type f 2>/dev/null > "$BINARIES_TMP"
+    while IFS= read -r binary; do
+        if file "$binary" 2>/dev/null | grep -q "Mach-O"; then
             BIN_COUNT=$((BIN_COUNT + 1))
             relocate_file "$binary" "@loader_path/../lib/"
         fi
-    done
+    done < "$BINARIES_TMP"
 fi
-echo "    Processed binaries" >&2
-echo "" >&2
 
-echo "==> Relocating libraries" >&2
 LIB_COUNT=0
 if [ -d "$BUNDLE_DIR/lib" ]; then
-    find "$BUNDLE_DIR/lib" -name "*.dylib" -type f 2>/dev/null | while read -r dylib; do
+    find "$BUNDLE_DIR/lib" -name "*.dylib" -type f 2>/dev/null > "$DYLIBS_TMP"
+    while IFS= read -r dylib; do
         LIB_COUNT=$((LIB_COUNT + 1))
         lib_name=$(basename "$dylib")
 
         install_name_tool -id "@loader_path/$lib_name" "$dylib" 2>/dev/null || true
 
         relocate_file "$dylib" "@loader_path/"
-    done
+    done < "$DYLIBS_TMP"
 fi
-echo "    Processed libraries" >&2
-echo "" >&2
 
-echo "==> Relocating library modules and subdirectory binaries" >&2
-find "$BUNDLE_DIR/lib" -mindepth 2 -type f 2>/dev/null | while read -r module; do
+MODULE_COUNT=0
+find "$BUNDLE_DIR/lib" -mindepth 2 -type f 2>/dev/null > "$MODULES_TMP"
+while IFS= read -r module; do
     if file "$module" 2>/dev/null | grep -q "Mach-O"; then
+        MODULE_COUNT=$((MODULE_COUNT + 1))
         module_name=$(basename "$module")
 
         # Set ID for libraries (.so, .dylib)
@@ -81,18 +88,17 @@ find "$BUNDLE_DIR/lib" -mindepth 2 -type f 2>/dev/null | while read -r module; d
         # Relocate dependencies (all Mach-O files)
         relocate_file "$module" "@loader_path/../"
     fi
-done
-echo "    Processed library modules and binaries" >&2
+done < "$MODULES_TMP"
+
+echo "    Relocated $BIN_COUNT binaries, $LIB_COUNT libraries, $MODULE_COUNT modules" >&2
 echo "" >&2
 
-echo "==> Verification" >&2
 VERIFY_TMP="/tmp/verify_placeholders_$$"
 rm -f "$VERIFY_TMP"
 
 find "$BUNDLE_DIR/bin" "$BUNDLE_DIR/lib" -type f 2>/dev/null | while read -r file; do
     if file "$file" 2>/dev/null | grep -q "Mach-O"; then
         if otool -L "$file" 2>/dev/null | grep -q -E "(@@HOMEBREW_PREFIX@@|@@HOMEBREW_CELLAR@@)"; then
-            echo "    Warning: $file still has placeholders" >&2
             echo "$file" >> "$VERIFY_TMP"
         fi
     fi
@@ -106,9 +112,4 @@ else
 fi
 
 rm -f "$VERIFY_TMP"
-
-echo "" >&2
-echo "==> Summary:" >&2
-echo "    Bundle: $BUNDLE_DIR" >&2
-echo "    Relocation complete" >&2
 echo "" >&2

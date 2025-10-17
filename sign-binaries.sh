@@ -21,7 +21,7 @@ fi
 BUNDLE_DIR=$(cd "$BUNDLE_DIR" && pwd)
 
 echo "==> Code Signing: $BUNDLE_DIR" >&2
-echo "    Identity: $SIGNING_IDENTITY" >&2
+echo "    Identity: [Developer ID - redacted for security]" >&2
 echo "" >&2
 
 sign_file() {
@@ -31,14 +31,12 @@ sign_file() {
         return 0
     fi
 
-    echo "    Signing: $(basename "$file")" >&2
-
     codesign --force \
              --sign "$SIGNING_IDENTITY" \
              --timestamp \
              --options runtime \
-             "$file" 2>&1 || {
-        echo "    Warning: Failed to sign $file" >&2
+             "$file" >/dev/null 2>&1 || {
+        echo "    ⚠ Failed to sign: $(basename "$file")" >&2
         return 1
     }
 
@@ -121,7 +119,6 @@ rm -f "$COUNTER_FILE" "$VERIFY_FILE"
 echo "" >&2
 echo "==> Summary:" >&2
 echo "    Bundle: $BUNDLE_DIR" >&2
-echo "    Identity: $SIGNING_IDENTITY" >&2
 echo "    Code signing complete" >&2
 echo "" >&2
 
