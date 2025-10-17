@@ -27,10 +27,10 @@ get_supported_versions() {
             echo "14 15 16 17 18"
             ;;
         "redis")
-            echo "7 8"
+            echo "8"
             ;;
         "valkey")
-            echo "7 8"
+            echo "8"
             ;;
         *)
             echo ""
