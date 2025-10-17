@@ -212,17 +212,16 @@ jobs:
             fi
 
             # List all files for this service-major and delete all except the current one
-            DELETED=0
             aws s3api list-objects-v2 \
               --bucket ${{ secrets.R2_BUCKET_NAME }} \
               --prefix "${service}-${major}." \
               --endpoint-url ${{ secrets.R2_ENDPOINT }} \
               --query 'Contents[].Key' \
-              --output text | tr '\t' '\n' | while read -r file_key; do
+              --output text 2>/dev/null | tr '\t' '\n' | while read -r file_key; do
               if [[ "$file_key" != "$CURRENT_FILENAME" ]] && [[ "$file_key" != "None" ]] && [[ -n "$file_key" ]]; then
-                aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/"$file_key" --endpoint-url ${{ secrets.R2_ENDPOINT }} >/dev/null 2>&1 && DELETED=$((DELETED + 1))
+                if aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/"$file_key" --endpoint-url ${{ secrets.R2_ENDPOINT }} >/dev/null 2>&1; then
+                  echo "✓ Deleted old build: $file_key"
+                fi
               fi
             done
-
-            [[ $DELETED -gt 0 ]] && echo "✓ Cleaned $DELETED old builds for $service $major"
           done
