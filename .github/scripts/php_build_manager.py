@@ -8,7 +8,6 @@ import json
 import argparse
 import tarfile
 import subprocess
-from datetime import datetime, UTC
 from pathlib import Path
 
 METADATA_FILE = 'metadata-php.json'
@@ -25,14 +24,9 @@ def save_json(data, filepath):
         json.dump(data, f, indent=2)
 
 
-def generate_build_timestamp():
-    """Generate unique build timestamp."""
-    return datetime.now(UTC).strftime("%Y%m%d%H%M%S")
-
-
-def get_archive_filename(full_version, timestamp):
-    """Generate filename with timestamp."""
-    return f"php-{full_version}-{timestamp}.tar.xz"
+def get_archive_filename(full_version):
+    """Generate filename without timestamp."""
+    return f"php-{full_version}.tar.gz"
 
 
 def fetch_version_details(version):
@@ -120,14 +114,11 @@ def check_versions():
         f.write(f'should-build={should_build}\n')
 
 
-def create_archive(php_version, timestamp):
-    """Create tar.xz archive containing both CLI and FPM binaries."""
-    if not timestamp:
-        raise ValueError("Timestamp is required")
+def create_archive(php_version):
+    """Create tar.gz archive containing both CLI and FPM binaries."""
+    archive_name = get_archive_filename(php_version)
 
-    archive_name = get_archive_filename(php_version, timestamp)
-
-    with tarfile.open(archive_name, 'w:xz') as tar:
+    with tarfile.open(archive_name, 'w:gz') as tar:
         tar.add('buildroot/bin/php', arcname='php-cli')
         tar.add('buildroot/bin/php-fpm', arcname='php-fpm')
 
@@ -200,9 +191,8 @@ def main():
 
     subparsers.add_parser('check-versions', help='Check PHP versions and generate build matrix')
 
-    archive_parser = subparsers.add_parser('create-archive', help='Create tar.xz archive with CLI and FPM')
+    archive_parser = subparsers.add_parser('create-archive', help='Create tar.gz archive with CLI and FPM')
     archive_parser.add_argument('--php-version', required=True, help='PHP version')
-    archive_parser.add_argument('--timestamp', required=True, help='Build timestamp')
 
     metadata_parser = subparsers.add_parser('update-metadata', help='Update metadata-php.json with build results')
     metadata_parser.add_argument('--build-matrix', required=True, help='JSON build matrix')
@@ -216,7 +206,7 @@ def main():
     if args.command == 'check-versions':
         check_versions()
     elif args.command == 'create-archive':
-        create_archive(args.php_version, args.timestamp)
+        create_archive(args.php_version)
     elif args.command == 'update-metadata':
         update_metadata(args.build_matrix, args.archive_checksums)
     elif args.command == 'cleanup-eol':

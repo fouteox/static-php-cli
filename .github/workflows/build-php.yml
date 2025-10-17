@@ -84,13 +84,6 @@ jobs:
 
           echo "EXTENSIONS=$EXTENSIONS" >> $GITHUB_ENV
 
-      - name: "Generate Build Timestamp"
-        id: timestamp
-        run: |
-          TIMESTAMP=$(date -u +"%Y%m%d%H%M%S")
-          echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
-          echo "Generated timestamp: $TIMESTAMP"
-
       - name: "Build PHP"
         run: |
           export SPC_PHP_VERSION_SHORT=$(echo ${{ matrix.php-version }} | sed 's/\.//g' | cut -c1-2)
@@ -99,8 +92,7 @@ jobs:
       - name: "Create and Upload PHP archive to R2 with SHA-256"
         run: |
           python3 .github/scripts/php_build_manager.py create-archive \
-            --php-version ${{ matrix.full-version }} \
-            --timestamp ${{ steps.timestamp.outputs.timestamp }}
+            --php-version ${{ matrix.full-version }}
 
           source archive_info.txt
           echo "Uploading: $ARCHIVE_NAME"
