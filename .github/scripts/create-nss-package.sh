@@ -100,6 +100,25 @@ find lib -name "*.dylib" -type f 2>/dev/null | while IFS= read -r dylib; do
     done
 done
 
+# Re-sign all binaries after rpath modifications
+if [ -n "${SIGNING_IDENTITY:-}" ]; then
+    # Sign dylibs first (dependencies)
+    find lib -name "*.dylib" -type f 2>/dev/null | while IFS= read -r dylib; do
+        codesign --force \
+                 --sign "$SIGNING_IDENTITY" \
+                 --timestamp \
+                 --options runtime \
+                 "$dylib" 2>/dev/null || true
+    done
+
+    # Sign certutil last (main binary)
+    codesign --force \
+             --sign "$SIGNING_IDENTITY" \
+             --timestamp \
+             --options runtime \
+             certutil 2>/dev/null || true
+fi
+
 ARCHIVE_DIR=$(dirname "$ARCHIVE")
 ARCHIVE_BASE=$(basename "$ARCHIVE" .tar.gz)
 MINIMAL_ARCHIVE="$ARCHIVE_DIR/${ARCHIVE_BASE}.tar.gz"
