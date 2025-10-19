@@ -30,8 +30,8 @@ relocate_file() {
 
     echo "$deps" | while IFS= read -r line; do
         old_path=$(echo "$line" | awk '{print $1}')
-        lib_name=$(basename "$old_path")
-        new_path="${base_path}${lib_name}"
+        relative_path=$(echo "$old_path" | sed 's|.*/lib/||')
+        new_path="${base_path}${relative_path}"
 
         install_name_tool -change "$old_path" "$new_path" "$file" 2>/dev/null || true
     done
