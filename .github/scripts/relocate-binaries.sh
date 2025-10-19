@@ -60,7 +60,7 @@ fi
 
 LIB_COUNT=0
 if [ -d "$BUNDLE_DIR/lib" ]; then
-    find "$BUNDLE_DIR/lib" -name "*.dylib" -type f 2>/dev/null > "$DYLIBS_TMP"
+    find "$BUNDLE_DIR/lib" -maxdepth 1 -name "*.dylib" -type f 2>/dev/null > "$DYLIBS_TMP"
     while IFS= read -r dylib; do
         LIB_COUNT=$((LIB_COUNT + 1))
         lib_name=$(basename "$dylib")
