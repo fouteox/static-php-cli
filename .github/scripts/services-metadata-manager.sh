@@ -35,49 +35,36 @@ log_error() {
 }
 
 check_prerequisites() {
-    for cmd in curl jq; do
-        command -v "$cmd" >/dev/null 2>&1 || log_error "$cmd is required but not installed"
-    done
+    command -v jq >/dev/null 2>&1 || log_error "jq is required but not installed"
 }
 
 # ================================
-# ENDOFLIFE.DATE API FUNCTIONS
+# RECIPE VERSION EXTRACTION
 # ================================
 
-get_latest_from_api() {
-    local service="$1"
-    local major_version="$2"
-    local api_url="https://endoflife.date/api/${service}.json"
+get_version_from_recipe() {
+    local recipe_name="$1"
 
-    local response
-    response=$(curl -s "$api_url" 2>/dev/null)
-
-    if [[ -z "$response" ]]; then
-        log_error "Failed to fetch API for $service"
+    if [[ -z "$recipe_name" ]]; then
+        log_error "Recipe name required"
     fi
 
-    local latest_version
-    case "$service" in
-        postgresql)
-            # PostgreSQL uses exact cycle match (e.g., "16", "17")
-            latest_version=$(echo "$response" | jq -r ".[] | select(.cycle == \"$major_version\") | .latest")
-            ;;
-        mariadb|mysql|redis|valkey)
-            # These use cycle prefix match (e.g., "11.8" for major "11")
-            latest_version=$(echo "$response" | jq -r "
-                [.[] | select(.cycle | startswith(\"$major_version.\"))]
-                | sort_by(.releaseDate)
-                | reverse
-                | .[0].latest
-            ")
-            ;;
-    esac
+    local recipe_file="${SCRIPT_DIR}/recipes/${recipe_name}.sh"
 
-    if [[ "$latest_version" == "null" || -z "$latest_version" ]]; then
-        log_error "Version $major_version not found for $service"
+    if [[ ! -f "$recipe_file" ]]; then
+        log_error "Recipe not found: $recipe_file"
     fi
 
-    echo "$latest_version"
+    # Extract PACKAGE_VERSION from recipe file
+    local version
+    # shellcheck disable=SC1090
+    version=$(source "$recipe_file" && echo "$PACKAGE_VERSION")
+
+    if [[ -z "$version" ]]; then
+        log_error "Could not extract PACKAGE_VERSION from $recipe_file"
+    fi
+
+    echo "$version"
 }
 
 # ================================
@@ -114,31 +101,38 @@ check_versions() {
 
         # Check each major version
         for major in $major_versions; do
-            # Get latest version from API
-            local api_latest
-            api_latest=$(get_latest_from_api "$service" "$major")
+            # Check if a recipe exists for this service+major
+            local recipe_name
+            recipe_name=$(get_recipe_for_service_major "$service" "$major")
+
+            if [[ $? -ne 0 || -z "$recipe_name" ]]; then
+                log_info "Skip: $service $major (no recipe available)"
+                continue
+            fi
+
+            # Get version from recipe
+            local recipe_version
+            recipe_version=$(get_version_from_recipe "$recipe_name")
+
+            if [[ $? -ne 0 || -z "$recipe_version" ]]; then
+                log_info "Skip: $service $major (could not extract version from recipe)"
+                continue
+            fi
 
             # Get current version from metadata (if exists)
             local metadata_latest
             metadata_latest=$(echo "$metadata" | jq -r ".\"$service\".\"$major\".latest // \"\"")
 
             # Compare versions
-            if [[ "$api_latest" != "$metadata_latest" ]]; then
+            if [[ "$recipe_version" != "$metadata_latest" ]]; then
                 if [[ -z "$metadata_latest" ]]; then
-                    log_info "New: ${service} ${major} -> ${api_latest}"
+                    log_info "New: ${service} ${major} -> ${recipe_version} (recipe: ${recipe_name})"
                 else
-                    log_info "Update: ${service} ${major} -> ${api_latest} (was: ${metadata_latest})"
+                    log_info "Update: ${service} ${major} -> ${recipe_version} (was: ${metadata_latest}, recipe: ${recipe_name})"
                 fi
 
-                # Check Homebrew availability (single call)
-                brew_formula=$(bash "${SCRIPT_DIR}/check-brew-version.sh" "$service" "$api_latest" 2>/dev/null)
-
-                if [[ $? -eq 0 && -n "$brew_formula" ]]; then
-                    # Add to build matrix with resolved formula
-                    matrix_items+=("{\"service\": \"$service\", \"version\": \"$api_latest\", \"major\": \"$major\", \"formula\": \"$brew_formula\"}")
-                else
-                    log_info "Skip: $service $major (not available in Homebrew)"
-                fi
+                # Add to build matrix with recipe name
+                matrix_items+=("{\"service\": \"$service\", \"version\": \"$recipe_version\", \"major\": \"$major\", \"recipe\": \"$recipe_name\"}")
             fi
         done
     done

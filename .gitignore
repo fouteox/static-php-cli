@@ -1,4 +1,5 @@
 .idea
+.github/scripts/build
 runtime/
 docker/libraries/
 docker/extensions/

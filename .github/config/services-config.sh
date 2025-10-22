@@ -58,6 +58,47 @@ is_version_supported() {
     fi
 }
 
+# Fonction utilitaire : obtenir la recipe correspondant à un service et une version majeure
+get_recipe_for_service_major() {
+    local service="$1"
+    local major="$2"
+
+    if [[ -z "$service" || -z "$major" ]]; then
+        echo "Usage: get_recipe_for_service_major <service> <major>" >&2
+        return 1
+    fi
+
+    # Déterminer le chemin vers les recipes
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local recipes_dir="${script_dir}/../scripts/recipes"
+
+    # 1. Chercher pattern {service}@{major}.*.sh (ex: mysql@8.4.sh, mariadb@10.11.sh)
+    local recipe_file
+    recipe_file=$(find "$recipes_dir" -maxdepth 1 -name "${service}@${major}.*.sh" 2>/dev/null | head -1)
+
+    if [[ -n "$recipe_file" ]]; then
+        basename "$recipe_file" .sh
+        return 0
+    fi
+
+    # 2. Chercher pattern {service}@{major}.sh (ex: postgresql@14.sh)
+    if [[ -f "${recipes_dir}/${service}@${major}.sh" ]]; then
+        echo "${service}@${major}"
+        return 0
+    fi
+
+    # 3. Chercher pattern {service}.sh (ex: valkey.sh) - seulement si major correspond
+    # Cette règle s'applique quand le service utilise la formule principale
+    if [[ -f "${recipes_dir}/${service}.sh" ]]; then
+        echo "${service}"
+        return 0
+    fi
+
+    # Aucune recipe trouvée
+    return 1
+}
+
 # Fonction utilitaire : afficher toutes les configurations
 show_all_configs() {
     echo "=== CONFIGURATION DES SERVICES ==="

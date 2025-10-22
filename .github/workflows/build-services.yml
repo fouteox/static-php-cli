@@ -1,8 +1,9 @@
 name: "Build Services"
 
 on:
-  schedule:
-    - cron: '0 0,12 * * *'  # Every 12 hours (midnight and noon UTC)
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 env:
@@ -11,7 +12,7 @@ env:
 jobs:
   check-and-sync:
     name: "Check service versions and sync"
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     outputs:
       build-matrix: ${{ steps.check.outputs.build-matrix }}
       should-build: ${{ steps.check.outputs.should-build }}
@@ -22,12 +23,6 @@ jobs:
     steps:
       - name: "Checkout"
         uses: actions/checkout@v5
-
-      - name: "Update Homebrew"
-        run: |
-          echo "Updating Homebrew..."
-          brew update >/dev/null 2>&1
-          echo "✓ Homebrew updated"
 
       - name: "Download metadata-services.json from R2"
         id: download-metadata
@@ -46,13 +41,12 @@ jobs:
     runs-on: macos-latest
     needs: [check-and-sync]
     if: needs.check-and-sync.outputs.should-build == 'true'
-    timeout-minutes: 60
+    timeout-minutes: 240
     continue-on-error: true
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: us-east-1
-      SIGNING_IDENTITY: ${{ secrets.SIGNING_IDENTITY }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.check-and-sync.outputs.build-matrix) }}
@@ -66,41 +60,9 @@ jobs:
           brew update >/dev/null 2>&1
           echo "✓ Homebrew updated"
 
-      - name: "Import Apple Code Signing Certificate"
-        env:
-          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
-          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      - name: "Build ${{ matrix.service }} from source"
         run: |
-          # Decode certificate
-          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $RUNNER_TEMP/build_certificate.p12
-
-          # Create temporary keychain
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/app-signing.keychain-db
-
-          # Set as default keychain (CRITICAL for codesign to find identity)
-          security default-keychain -s $RUNNER_TEMP/app-signing.keychain-db
-
-          security set-keychain-settings -lut 21600 $RUNNER_TEMP/app-signing.keychain-db
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/app-signing.keychain-db
-
-          # Import certificate with explicit codesign access
-          security import $RUNNER_TEMP/build_certificate.p12 \
-            -P "$P12_PASSWORD" \
-            -A \
-            -t cert \
-            -f pkcs12 \
-            -k $RUNNER_TEMP/app-signing.keychain-db \
-            -T /usr/bin/codesign
-
-          security list-keychain -d user -s $RUNNER_TEMP/app-signing.keychain-db
-
-          # Allow codesign to access keychain without password prompt
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/app-signing.keychain-db
-
-      - name: "Build ${{ matrix.service }} via Homebrew"
-        run: |
-          .github/scripts/create-portable-package.sh "${{ matrix.formula }}" 2>&1 | tail -5
+          .github/scripts/build-from-recipes.sh "${{ matrix.recipe }}" 2>&1 | tail -20
 
       - name: "Upload archive to R2 with SHA-256 checksum"
         run: |
@@ -139,12 +101,6 @@ jobs:
           name: checksum-${{ matrix.service }}-${{ matrix.version }}
           path: checksum-${{ matrix.service }}-${{ matrix.version }}.txt
           retention-days: 1
-
-      - name: "Cleanup Keychain"
-        if: always()
-        run: |
-          security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true
-          rm -f $RUNNER_TEMP/build_certificate.p12 || true
 
   update-metadata:
     name: "Update metadata-services.json"
