@@ -205,6 +205,12 @@ build_package() {
         # shellcheck source=/dev/null
         source "$recipe_file"
         cd "$source_dir"
+
+        # Add install prefix to PATH and PKG_CONFIG_PATH so dependencies can find each other
+        # This allows configure scripts to find tools like mecab-config, groonga, etc.
+        export PATH="${install_prefix}/bin:${PATH}"
+        export PKG_CONFIG_PATH="${install_prefix}/lib/pkgconfig:${PKG_CONFIG_PATH}"
+
         build "$install_prefix" "$source_dir"
     )
 
