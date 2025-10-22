@@ -60,6 +60,12 @@ jobs:
           brew update >/dev/null 2>&1
           echo "✓ Homebrew updated"
 
+      - name: "Install bash via Homebrew"
+        run: |
+          echo "Installing bash..."
+          brew install bash
+          echo "✓ Bash installed: $(/opt/homebrew/bin/bash --version | head -1)"
+
       - name: "Build ${{ matrix.service }} from source"
         run: |
           .github/scripts/build-from-recipes.sh "${{ matrix.recipe }}" 2>&1 | tail -20
