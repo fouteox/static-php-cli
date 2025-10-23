@@ -1,0 +1,236 @@
+name: "Build Composer"
+
+on:
+  schedule:
+    - cron: '0 3 * * *'  # Daily at 3 AM UTC
+  workflow_dispatch:
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  check-composer-version:
+    name: "Check Composer version"
+    runs-on: ubuntu-latest
+    outputs:
+      should-build: ${{ steps.check.outputs.should-build }}
+      composer-version: ${{ steps.check.outputs.composer-version }}
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v5
+
+      - name: "Download metadata-composer.json from R2"
+        id: download-metadata
+        run: |
+          if ! aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata-composer.json metadata-composer.json --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null; then
+            echo "{}" > metadata-composer.json
+            echo "Created empty metadata-composer.json"
+          else
+            echo "Downloaded existing metadata-composer.json"
+          fi
+
+      - name: "Check Composer version"
+        id: check
+        run: |
+          # Fetch Composer versions from endoflife.date API
+          COMPOSER_API_RESPONSE=$(curl -fsSL https://endoflife.date/api/v1/products/composer/)
+
+          # Extract latest 2.x version that is not EOL
+          # The API returns a result object with releases array
+          LATEST_VERSION=$(echo "$COMPOSER_API_RESPONSE" | jq -r '
+            .result.releases[]
+            | select(.name | startswith("2."))
+            | select(.isEol == false)
+            | .latest.name'
+            | head -1)
+
+          echo "Latest Composer 2.x version: $LATEST_VERSION"
+
+          # Get version from metadata
+          METADATA_VERSION=$(jq -r '.latest // ""' metadata-composer.json)
+          echo "Metadata version: ${METADATA_VERSION:-none}"
+
+          # Compare versions
+          if [[ "$LATEST_VERSION" != "$METADATA_VERSION" ]]; then
+            echo "should-build=true" >> $GITHUB_OUTPUT
+            echo "composer-version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+            if [[ -z "$METADATA_VERSION" ]]; then
+              echo "✓ New: Composer $LATEST_VERSION (initial build)"
+            else
+              echo "✓ Update: Composer $LATEST_VERSION (was: $METADATA_VERSION)"
+            fi
+          else
+            echo "should-build=false" >> $GITHUB_OUTPUT
+            echo "composer-version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+            echo "→ Composer $LATEST_VERSION already built, skipping"
+          fi
+
+  build-composer:
+    name: "Build Composer ${{ needs.check-composer-version.outputs.composer-version }}"
+    runs-on: ubuntu-latest
+    needs: [check-composer-version]
+    if: needs.check-composer-version.outputs.should-build == 'true'
+    timeout-minutes: 10
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v5
+
+      - name: "Download and verify Composer PHAR"
+        run: |
+          VERSION="${{ needs.check-composer-version.outputs.composer-version }}"
+
+          # Download composer.phar
+          echo "Downloading Composer $VERSION..."
+          curl -fsSL -o composer.phar "https://getcomposer.org/download/${VERSION}/composer.phar"
+
+          # Download checksum
+          curl -fsSL -o composer.phar.sha256sum "https://getcomposer.org/download/${VERSION}/composer.phar.sha256sum"
+
+          # Verify checksum
+          echo "Verifying checksum..."
+          shasum -a 256 -c composer.phar.sha256sum
+
+          # Rename and make executable
+          mv composer.phar composer
+          chmod +x composer
+
+          echo "✓ Composer $VERSION downloaded and verified"
+
+      - name: "Create archive"
+        run: |
+          VERSION="${{ needs.check-composer-version.outputs.composer-version }}"
+          ARCHIVE_NAME="composer-${VERSION}.tar.gz"
+
+          # Create archive with just the binary at root
+          tar -czf "$ARCHIVE_NAME" composer
+
+          echo "✓ Created $ARCHIVE_NAME"
+          echo "ARCHIVE_NAME=$ARCHIVE_NAME" >> $GITHUB_ENV
+
+      - name: "Upload archive to R2 with SHA-256 checksum"
+        run: |
+          VERSION="${{ needs.check-composer-version.outputs.composer-version }}"
+          ARCHIVE_NAME="${{ env.ARCHIVE_NAME }}"
+
+          if [[ ! -f "$ARCHIVE_NAME" ]]; then
+            echo "[ERROR] Archive not found: $ARCHIVE_NAME"
+            exit 1
+          fi
+
+          # Upload with native SHA-256 checksum (R2 calculates and returns checksum)
+          UPLOAD_RESULT=$(aws s3api put-object \
+            --bucket ${{ secrets.R2_BUCKET_NAME }} \
+            --key "$ARCHIVE_NAME" \
+            --body "$ARCHIVE_NAME" \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }} \
+            --checksum-algorithm SHA256 \
+            --metadata tool="composer",version="$VERSION" \
+            --output json)
+
+          # Extract checksum from upload response and convert to hex
+          CHECKSUM_BASE64=$(echo "$UPLOAD_RESULT" | jq -r '.ChecksumSHA256')
+          CHECKSUM_HEX=$(echo "$CHECKSUM_BASE64" | base64 -d | xxd -p -c 256)
+
+          echo "✓ Uploaded $ARCHIVE_NAME (SHA-256: $CHECKSUM_HEX)"
+
+          # Save checksum info (format: version,sha256,filename)
+          echo "${VERSION},${CHECKSUM_HEX},${ARCHIVE_NAME}" > checksum-composer.txt
+
+      - name: "Upload checksum info"
+        uses: actions/upload-artifact@v4
+        with:
+          name: checksum-composer
+          path: checksum-composer.txt
+          retention-days: 1
+
+  update-metadata:
+    name: "Update metadata-composer.json"
+    runs-on: ubuntu-latest
+    needs: [check-composer-version, build-composer]
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v5
+
+      - name: "Download checksum artifact"
+        uses: actions/download-artifact@v5
+        with:
+          name: checksum-composer
+
+      - name: "Update metadata"
+        run: |
+          # Read checksum info (format: version,sha256,filename)
+          IFS=',' read -r VERSION SHA256 FILENAME < checksum-composer.txt
+
+          # Create metadata-composer.json
+          jq -n \
+            --arg latest "$VERSION" \
+            --arg sha256 "$SHA256" \
+            --arg filename "$FILENAME" \
+            '{
+              "latest": $latest,
+              "sha256": $sha256,
+              "filename": $filename
+            }' > metadata-composer.json
+
+          echo "Created metadata-composer.json:"
+          cat metadata-composer.json
+
+      - name: "Upload metadata-composer.json to R2"
+        run: |
+          aws s3 cp metadata-composer.json s3://${{ secrets.R2_BUCKET_NAME }}/metadata-composer.json --endpoint-url ${{ secrets.R2_ENDPOINT }} >/dev/null
+          echo "✓ Metadata updated"
+
+  cleanup-old-builds:
+    name: "Cleanup old Composer builds"
+    runs-on: ubuntu-latest
+    needs: [update-metadata]
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v5
+
+      - name: "Download updated metadata-composer.json from R2"
+        run: |
+          aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata-composer.json metadata-composer.json --endpoint-url ${{ secrets.R2_ENDPOINT }} >/dev/null
+
+      - name: "Cleanup old builds"
+        run: |
+          # Extract current filename from metadata
+          CURRENT_FILENAME=$(jq -r '.filename' metadata-composer.json)
+
+          echo "Current build: $CURRENT_FILENAME"
+
+          # List all composer-*.tar.gz files and delete all except the current one
+          aws s3api list-objects-v2 \
+            --bucket ${{ secrets.R2_BUCKET_NAME }} \
+            --prefix "composer-" \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }} \
+            --query 'Contents[].Key' \
+            --output text 2>/dev/null | tr '\t' '\n' | while read -r file_key; do
+            case "$file_key" in
+              composer-*.tar.gz)
+                if [ "$file_key" != "$CURRENT_FILENAME" ] && [ -n "$file_key" ]; then
+                  if aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/"$file_key" --endpoint-url ${{ secrets.R2_ENDPOINT }} >/dev/null 2>&1; then
+                    echo "✓ Deleted old build: $file_key"
+                  fi
+                fi
+                ;;
+            esac
+          done
+
+          echo "✓ Cleanup completed"
