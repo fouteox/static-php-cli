@@ -41,12 +41,7 @@ jobs:
 
           # Extract latest 2.x version that is not EOL
           # The API returns a result object with releases array
-          LATEST_VERSION=$(echo "$COMPOSER_API_RESPONSE" | jq -r '
-            .result.releases[]
-            | select(.name | startswith("2."))
-            | select(.isEol == false)
-            | .latest.name'
-            | head -1)
+          LATEST_VERSION=$(echo "$COMPOSER_API_RESPONSE" | jq -r '.result.releases[] | select(.name | startswith("2.")) | select(.isEol == false) | .latest.name' | head -1)
 
           echo "Latest Composer 2.x version: $LATEST_VERSION"
 
