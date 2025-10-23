@@ -113,12 +113,11 @@ jobs:
           tar -czf "$ARCHIVE_NAME" composer
 
           echo "✓ Created $ARCHIVE_NAME"
-          echo "ARCHIVE_NAME=$ARCHIVE_NAME" >> $GITHUB_ENV
 
       - name: "Upload archive to R2 with SHA-256 checksum"
         run: |
           VERSION="${{ needs.check-composer-version.outputs.composer-version }}"
-          ARCHIVE_NAME="${{ env.ARCHIVE_NAME }}"
+          ARCHIVE_NAME="composer-${VERSION}.tar.gz"
 
           if [[ ! -f "$ARCHIVE_NAME" ]]; then
             echo "[ERROR] Archive not found: $ARCHIVE_NAME"
