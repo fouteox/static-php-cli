@@ -10,7 +10,7 @@ env:
 
 jobs:
   build-sshpass:
-    name: "Build sshpass ${{ env.SSHPASS_VERSION }} for macOS ARM64"
+    name: "Build sshpass for macOS ARM64"
     runs-on: macos-latest
     timeout-minutes: 15
     env:
