@@ -1,0 +1,160 @@
+name: "Build sshpass"
+
+on:
+  workflow_dispatch:  # Manual trigger only
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  SSHPASS_VERSION: "1.10"
+  SSHPASS_SOURCE_SHA256: "ad1106c203cbb56185ca3bad8c6ccafca3b4064696194da879f81c8d7bdfeeda"
+
+jobs:
+  build-sshpass:
+    name: "Build sshpass ${{ env.SSHPASS_VERSION }} for macOS ARM64"
+    runs-on: macos-14  # macOS ARM64 runner
+    timeout-minutes: 15
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v5
+
+      - name: "Download and verify sshpass source"
+        run: |
+          VERSION="${{ env.SSHPASS_VERSION }}"
+          SOURCE_URL="https://sourceforge.net/projects/sshpass/files/sshpass/${VERSION}/sshpass-${VERSION}.tar.gz/download"
+
+          echo "Downloading sshpass ${VERSION} source..."
+          curl -L -o "sshpass-${VERSION}.tar.gz" "$SOURCE_URL"
+
+          # Verify source checksum
+          echo "Verifying source checksum..."
+          echo "${{ env.SSHPASS_SOURCE_SHA256 }}  sshpass-${VERSION}.tar.gz" | shasum -a 256 -c -
+
+          echo "✓ Source downloaded and verified"
+
+      - name: "Build sshpass for macOS ARM64"
+        run: |
+          VERSION="${{ env.SSHPASS_VERSION }}"
+
+          # Extract source
+          echo "Extracting source..."
+          tar -xzf "sshpass-${VERSION}.tar.gz"
+          cd "sshpass-${VERSION}"
+
+          # Configure for macOS ARM64
+          echo "Configuring build for ARM64..."
+          ./configure \
+            CC="clang" \
+            CFLAGS="-arch arm64 -mmacosx-version-min=14.0" \
+            --prefix="${GITHUB_WORKSPACE}/install"
+
+          # Build
+          echo "Compiling..."
+          make -j$(sysctl -n hw.ncpu)
+
+          # Install to temporary directory
+          echo "Installing..."
+          make install
+
+          # Verify binary architecture
+          echo "Verifying binary architecture..."
+          lipo -info "${GITHUB_WORKSPACE}/install/bin/sshpass"
+          file "${GITHUB_WORKSPACE}/install/bin/sshpass"
+
+          echo "✓ Build completed successfully"
+
+      - name: "Create archive"
+        run: |
+          VERSION="${{ env.SSHPASS_VERSION }}"
+          ARCHIVE_NAME="sshpass-${VERSION}-macos-arm64.tar.gz"
+
+          cd "${GITHUB_WORKSPACE}/install/bin"
+
+          # Create archive with just the binary at root
+          tar -czf "${GITHUB_WORKSPACE}/${ARCHIVE_NAME}" sshpass
+
+          # Verify archive contents
+          echo "Archive contents:"
+          tar -tzf "${GITHUB_WORKSPACE}/${ARCHIVE_NAME}"
+
+          echo "✓ Created ${ARCHIVE_NAME}"
+
+      - name: "Upload archive to R2 with SHA-256 checksum"
+        run: |
+          VERSION="${{ env.SSHPASS_VERSION }}"
+          ARCHIVE_NAME="sshpass-${VERSION}-macos-arm64.tar.gz"
+
+          if [[ ! -f "$ARCHIVE_NAME" ]]; then
+            echo "[ERROR] Archive not found: $ARCHIVE_NAME"
+            exit 1
+          fi
+
+          # Upload with native SHA-256 checksum (R2 calculates and returns checksum)
+          UPLOAD_RESULT=$(aws s3api put-object \
+            --bucket ${{ secrets.R2_BUCKET_NAME }} \
+            --key "$ARCHIVE_NAME" \
+            --body "$ARCHIVE_NAME" \
+            --endpoint-url ${{ secrets.R2_ENDPOINT }} \
+            --checksum-algorithm SHA256 \
+            --metadata tool="sshpass",version="$VERSION",platform="macos-arm64" \
+            --output json)
+
+          # Extract checksum from upload response and convert to hex
+          CHECKSUM_BASE64=$(echo "$UPLOAD_RESULT" | jq -r '.ChecksumSHA256')
+          CHECKSUM_HEX=$(echo "$CHECKSUM_BASE64" | base64 -d | xxd -p -c 256)
+
+          echo "✓ Uploaded $ARCHIVE_NAME (SHA-256: $CHECKSUM_HEX)"
+
+          # Save checksum info (format: version,sha256,filename)
+          echo "${VERSION},${CHECKSUM_HEX},${ARCHIVE_NAME}" > checksum-sshpass.txt
+
+      - name: "Upload checksum info"
+        uses: actions/upload-artifact@v4
+        with:
+          name: checksum-sshpass
+          path: checksum-sshpass.txt
+          retention-days: 1
+
+  update-metadata:
+    name: "Update metadata-sshpass.json"
+    runs-on: ubuntu-latest
+    needs: [build-sshpass]
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v5
+
+      - name: "Download checksum artifact"
+        uses: actions/download-artifact@v5
+        with:
+          name: checksum-sshpass
+
+      - name: "Update metadata"
+        run: |
+          # Read checksum info (format: version,sha256,filename)
+          IFS=',' read -r VERSION SHA256 FILENAME < checksum-sshpass.txt
+
+          # Create metadata-sshpass.json
+          jq -n \
+            --arg version "$VERSION" \
+            --arg sha256 "$SHA256" \
+            --arg filename "$FILENAME" \
+            '{
+              "version": $version,
+              "sha256": $sha256,
+              "filename": $filename
+            }' > metadata-sshpass.json
+
+          echo "Created metadata-sshpass.json:"
+          cat metadata-sshpass.json
+
+      - name: "Upload metadata-sshpass.json to R2"
+        run: |
+          aws s3 cp metadata-sshpass.json s3://${{ secrets.R2_BUCKET_NAME }}/metadata-sshpass.json --endpoint-url ${{ secrets.R2_ENDPOINT }} >/dev/null
+          echo "✓ Metadata uploaded successfully"
