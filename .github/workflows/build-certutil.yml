@@ -75,52 +75,13 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: us-east-1
-      SIGNING_IDENTITY: ${{ secrets.SIGNING_IDENTITY }}
     steps:
       - name: "Checkout"
         uses: actions/checkout@v5
 
-      - name: "Update Homebrew"
+      - name: "Build certutil from source"
         run: |
-          echo "Updating Homebrew..."
-          brew update >/dev/null 2>&1
-          echo "✓ Homebrew updated"
-
-      - name: "Import Apple Code Signing Certificate"
-        env:
-          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
-          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          # Decode certificate
-          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $RUNNER_TEMP/build_certificate.p12
-
-          # Create temporary keychain
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/app-signing.keychain-db
-
-          # Set as default keychain (CRITICAL for codesign to find identity)
-          security default-keychain -s $RUNNER_TEMP/app-signing.keychain-db
-
-          security set-keychain-settings -lut 21600 $RUNNER_TEMP/app-signing.keychain-db
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/app-signing.keychain-db
-
-          # Import certificate with explicit codesign access
-          security import $RUNNER_TEMP/build_certificate.p12 \
-            -P "$P12_PASSWORD" \
-            -A \
-            -t cert \
-            -f pkcs12 \
-            -k $RUNNER_TEMP/app-signing.keychain-db \
-            -T /usr/bin/codesign
-
-          security list-keychain -d user -s $RUNNER_TEMP/app-signing.keychain-db
-
-          # Allow codesign to access keychain without password prompt
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/app-signing.keychain-db
-
-      - name: "Build certutil via create-nss-package.sh"
-        run: |
-          .github/scripts/create-nss-package.sh
+          .github/scripts/build-nss-minimal.sh nss@3
 
       - name: "Upload archive to R2 with SHA-256 checksum"
         run: |
@@ -157,12 +118,6 @@ jobs:
           name: checksum-certutil
           path: checksum-certutil.txt
           retention-days: 1
-
-      - name: "Cleanup Keychain"
-        if: always()
-        run: |
-          security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true
-          rm -f $RUNNER_TEMP/build_certificate.p12 || true
 
   update-metadata:
     name: "Update metadata-certutil.json"
