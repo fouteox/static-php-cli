@@ -1,4 +1,4 @@
-#!/opt/homebrew/bin/bash
+#!/bin/bash
 
 # Build NSS from source and create a minimal portable package
 # Usage: ./build-nss-minimal.sh <recipe-name>

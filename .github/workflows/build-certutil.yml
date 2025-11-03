@@ -1,75 +1,73 @@
 name: "Build certutil"
 
 on:
-  schedule:
-    - cron: '0 2 * * *'  # Daily at 2 AM UTC
+  # schedule:
+  #   - cron: '0 2 * * *'  # Daily at 2 AM UTC
   workflow_dispatch:
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
-  check-nss-version:
-    name: "Check NSS version"
-    runs-on: macos-latest
-    outputs:
-      should-build: ${{ steps.check.outputs.should-build }}
-      nss-version: ${{ steps.check.outputs.nss-version }}
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: us-east-1
-    steps:
-      - name: "Checkout"
-        uses: actions/checkout@v5
-
-      - name: "Update Homebrew"
-        run: |
-          echo "Updating Homebrew..."
-          brew update >/dev/null 2>&1
-          echo "✓ Homebrew updated"
-
-      - name: "Download metadata-certutil.json from R2"
-        id: download-metadata
-        run: |
-          if ! aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata-certutil.json metadata-certutil.json --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null; then
-            echo "{}" > metadata-certutil.json
-            echo "Created empty metadata-certutil.json"
-          else
-            echo "Downloaded existing metadata-certutil.json"
-          fi
-
-      - name: "Check NSS version"
-        id: check
-        run: |
-          # Get current NSS version from Homebrew
-          NSS_VERSION=$(brew info nss --json=v2 | jq -r '.formulae[0].versions.stable')
-          echo "Homebrew NSS version: $NSS_VERSION"
-
-          # Get version from metadata
-          METADATA_VERSION=$(jq -r '.latest // ""' metadata-certutil.json)
-          echo "Metadata version: ${METADATA_VERSION:-none}"
-
-          # Compare versions
-          if [[ "$NSS_VERSION" != "$METADATA_VERSION" ]]; then
-            echo "should-build=true" >> $GITHUB_OUTPUT
-            echo "nss-version=$NSS_VERSION" >> $GITHUB_OUTPUT
-            if [[ -z "$METADATA_VERSION" ]]; then
-              echo "✓ New: NSS $NSS_VERSION (initial build)"
-            else
-              echo "✓ Update: NSS $NSS_VERSION (was: $METADATA_VERSION)"
-            fi
-          else
-            echo "should-build=false" >> $GITHUB_OUTPUT
-            echo "nss-version=$NSS_VERSION" >> $GITHUB_OUTPUT
-            echo "→ NSS $NSS_VERSION already built, skipping"
-          fi
+  # check-nss-version:
+  #   name: "Check NSS version"
+  #   runs-on: macos-latest
+  #   outputs:
+  #     should-build: ${{ steps.check.outputs.should-build }}
+  #     nss-version: ${{ steps.check.outputs.nss-version }}
+  #   env:
+  #     AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+  #     AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+  #     AWS_DEFAULT_REGION: us-east-1
+  #   steps:
+  #     - name: "Checkout"
+  #       uses: actions/checkout@v5
+  #
+  #     - name: "Update Homebrew"
+  #       run: |
+  #         echo "Updating Homebrew..."
+  #         brew update >/dev/null 2>&1
+  #         echo "✓ Homebrew updated"
+  #
+  #     - name: "Download metadata-certutil.json from R2"
+  #       id: download-metadata
+  #       run: |
+  #         if ! aws s3 cp s3://${{ secrets.R2_BUCKET_NAME }}/metadata-certutil.json metadata-certutil.json --endpoint-url ${{ secrets.R2_ENDPOINT }} 2>/dev/null; then
+  #           echo "{}" > metadata-certutil.json
+  #           echo "Created empty metadata-certutil.json"
+  #         else
+  #           echo "Downloaded existing metadata-certutil.json"
+  #         fi
+  #
+  #     - name: "Check NSS version"
+  #       id: check
+  #       run: |
+  #         # Get current NSS version from Homebrew
+  #         NSS_VERSION=$(brew info nss --json=v2 | jq -r '.formulae[0].versions.stable')
+  #         echo "Homebrew NSS version: $NSS_VERSION"
+  #
+  #         # Get version from metadata
+  #         METADATA_VERSION=$(jq -r '.latest // ""' metadata-certutil.json)
+  #         echo "Metadata version: ${METADATA_VERSION:-none}"
+  #
+  #         # Compare versions
+  #         if [[ "$NSS_VERSION" != "$METADATA_VERSION" ]]; then
+  #           echo "should-build=true" >> $GITHUB_OUTPUT
+  #           echo "nss-version=$NSS_VERSION" >> $GITHUB_OUTPUT
+  #           if [[ -z "$METADATA_VERSION" ]]; then
+  #             echo "✓ New: NSS $NSS_VERSION (initial build)"
+  #           else
+  #             echo "✓ Update: NSS $NSS_VERSION (was: $METADATA_VERSION)"
+  #           fi
+  #         else
+  #           echo "should-build=false" >> $GITHUB_OUTPUT
+  #           echo "nss-version=$NSS_VERSION" >> $GITHUB_OUTPUT
+  #           echo "→ NSS $NSS_VERSION already built, skipping"
+  #         fi
 
   build-certutil:
-    name: "Build certutil (NSS ${{ needs.check-nss-version.outputs.nss-version }})"
+    name: "Build certutil"
     runs-on: macos-latest
-    needs: [check-nss-version]
-    if: needs.check-nss-version.outputs.should-build == 'true'
     timeout-minutes: 30
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -85,7 +83,8 @@ jobs:
 
       - name: "Upload archive to R2 with SHA-256 checksum"
         run: |
-          VERSION="${{ needs.check-nss-version.outputs.nss-version }}"
+          # Extract version from recipe file
+          VERSION=$(grep '^export PACKAGE_VERSION=' .github/scripts/recipes/nss@3.sh | cut -d'"' -f2)
           ARCHIVE_NAME="nss-${VERSION}.tar.gz"
 
           if [[ ! -f "$ARCHIVE_NAME" ]]; then
@@ -122,7 +121,7 @@ jobs:
   update-metadata:
     name: "Update metadata-certutil.json"
     runs-on: ubuntu-latest
-    needs: [check-nss-version, build-certutil]
+    needs: [build-certutil]
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
