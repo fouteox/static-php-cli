@@ -233,7 +233,7 @@ cd "${BUILD_DIR}"
 ARCHIVE_NAME="nss-${PKG_VERSION}.tar.gz"
 
 echo -e "${BLUE}→ Creating archive: ${ARCHIVE_NAME}${NC}"
-tar -czf "$ARCHIVE_NAME" -C "$CLEAN_DIR" . || {
+tar -czf "$ARCHIVE_NAME" -C "${BUILD_DIR}" "nss-${PKG_VERSION}" || {
     echo -e "${RED}✗ Failed to create archive${NC}"
     exit 1
 }
