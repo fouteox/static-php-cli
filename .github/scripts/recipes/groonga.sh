@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build recipe for groonga 15.1.7
+# Build recipe for groonga 15.2.0
 # Translated from: homebrew-core/Formula/g/groonga.rb
 # Description: Fulltext search engine and column store
 
@@ -7,9 +7,9 @@ set -e
 
 # Metadata
 export PACKAGE_NAME="groonga"
-export PACKAGE_VERSION="15.1.7"
-export PACKAGE_URL="https://github.com/groonga/groonga/releases/download/v15.1.7/groonga-15.1.7.tar.gz"
-export PACKAGE_SHA256="899a414a0636f7568d1a11845fe3dd75b701f72106a7a26f30bc950af5876616"
+export PACKAGE_VERSION="15.2.0"
+export PACKAGE_URL="https://github.com/groonga/groonga/releases/download/v15.2.0/groonga-15.2.0.tar.gz"
+export PACKAGE_SHA256="068a5cb0b32352e0c04f1a5a800259ea5bb740800add7c9b786d052e16da7ad9"
 
 # Runtime dependencies
 export DEPENDENCIES=(
