@@ -1,15 +1,21 @@
 #!/bin/bash
-# Build recipe for mariadb@11.8 11.8.3
+# Build recipe for MariaDB 11.x
 # Translated from: homebrew-core/Formula/m/mariadb@11.8.rb
 # Description: Drop-in replacement for MySQL
 
 set -e
 
+# Load helpers
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/recipe-helpers.sh"
+
 # Metadata
-export PACKAGE_NAME="mariadb@11.8"
 export PACKAGE_VERSION="11.8.3"
-export PACKAGE_URL="https://archive.mariadb.org/mariadb-11.8.3/source/mariadb-11.8.3.tar.gz"
 export PACKAGE_SHA256="1014a85c768de8f9e9c6d4bf0b42617f3b1588be1ad371f71674ea32b87119c0"
+
+# Derived automatically
+PACKAGE_NAME="$(get_package_name)"
+PACKAGE_URL="$(get_package_url mariadb "$PACKAGE_VERSION")"
+export PACKAGE_NAME PACKAGE_URL
 
 # Runtime dependencies
 export DEPENDENCIES=(

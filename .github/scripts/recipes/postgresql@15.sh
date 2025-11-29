@@ -1,15 +1,21 @@
 #!/bin/bash
-# Build recipe for postgresql@15 15.14
+# Build recipe for PostgreSQL 15.x
 # Translated from: homebrew-core/Formula/p/postgresql@15.rb
 # Description: Object-relational database system
 
 set -e
 
+# Load helpers
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/recipe-helpers.sh"
+
 # Metadata
-export PACKAGE_NAME="postgresql@15"
 export PACKAGE_VERSION="15.14"
-export PACKAGE_URL="https://ftp.postgresql.org/pub/source/v15.14/postgresql-15.14.tar.bz2"
 export PACKAGE_SHA256="06dd75d305cd3870ee62b3932e661c624543eaf9ae2ba37cdec0a4f8edd051d2"
+
+# Derived automatically
+PACKAGE_NAME="$(get_package_name)"
+PACKAGE_URL="$(get_package_url postgresql "$PACKAGE_VERSION")"
+export PACKAGE_NAME PACKAGE_URL
 
 # Runtime dependencies
 export DEPENDENCIES=(

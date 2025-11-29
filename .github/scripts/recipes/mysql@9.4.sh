@@ -1,15 +1,21 @@
 #!/bin/bash
-# Build recipe for mysql@9.4 9.4.0
+# Build recipe for MySQL 9.x
 # Translated from: homebrew-core/Formula/m/mysql.rb
 # Description: Open source relational database management system
 
 set -e
 
+# Load helpers
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/recipe-helpers.sh"
+
 # Metadata
-export PACKAGE_NAME="mysql@9.4"
 export PACKAGE_VERSION="9.4.0"
-export PACKAGE_URL="https://cdn.mysql.com/Downloads/MySQL-9.4/mysql-9.4.0.tar.gz"
 export PACKAGE_SHA256="6bb509c54e58b54abbefa49e296e7220f5e7cfe446914ba3615f594967cfa921"
+
+# Derived automatically
+PACKAGE_NAME="$(get_package_name)"
+PACKAGE_URL="$(get_package_url mysql "$PACKAGE_VERSION")"
+export PACKAGE_NAME PACKAGE_URL
 
 # Runtime dependencies
 export DEPENDENCIES=(

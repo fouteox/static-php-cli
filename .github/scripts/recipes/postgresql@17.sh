@@ -1,15 +1,21 @@
 #!/bin/bash
-# Build recipe for postgresql@17 17.6
+# Build recipe for PostgreSQL 17.x
 # Translated from: homebrew-core/Formula/p/postgresql@17.rb
 # Description: Object-relational database system
 
 set -e
 
+# Load helpers
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/recipe-helpers.sh"
+
 # Metadata
-export PACKAGE_NAME="postgresql@17"
 export PACKAGE_VERSION="17.6"
-export PACKAGE_URL="https://ftp.postgresql.org/pub/source/v17.6/postgresql-17.6.tar.bz2"
 export PACKAGE_SHA256="e0630a3600aea27511715563259ec2111cd5f4353a4b040e0be827f94cd7a8b0"
+
+# Derived automatically
+PACKAGE_NAME="$(get_package_name)"
+PACKAGE_URL="$(get_package_url postgresql "$PACKAGE_VERSION")"
+export PACKAGE_NAME PACKAGE_URL
 
 # Runtime dependencies
 export DEPENDENCIES=(

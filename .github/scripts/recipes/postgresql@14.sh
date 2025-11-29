@@ -1,15 +1,21 @@
 #!/bin/bash
-# Build recipe for postgresql@14 14.19
+# Build recipe for PostgreSQL 14.x
 # Translated from: homebrew-core/Formula/p/postgresql@14.rb
 # Description: Object-relational database system
 
 set -e
 
+# Load helpers
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/recipe-helpers.sh"
+
 # Metadata
-export PACKAGE_NAME="postgresql@14"
 export PACKAGE_VERSION="14.19"
-export PACKAGE_URL="https://ftp.postgresql.org/pub/source/v14.19/postgresql-14.19.tar.bz2"
 export PACKAGE_SHA256="727e9e334bc1a31940df808259f69fe47a59f6d42174b22ae62d67fe7a01ad80"
+
+# Derived automatically
+PACKAGE_NAME="$(get_package_name)"
+PACKAGE_URL="$(get_package_url postgresql "$PACKAGE_VERSION")"
+export PACKAGE_NAME PACKAGE_URL
 
 # Runtime dependencies
 export DEPENDENCIES=(
