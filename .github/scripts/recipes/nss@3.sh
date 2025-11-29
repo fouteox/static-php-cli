@@ -7,9 +7,9 @@ set -e
 
 # Metadata
 export PACKAGE_NAME="nss@3"
-export PACKAGE_VERSION="3.117"
-export PACKAGE_URL="https://ftp.mozilla.org/pub/security/nss/releases/NSS_3_117_RTM/src/nss-3.117-with-nspr-4.37.tar.gz"
-export PACKAGE_SHA256="cda19ca82e3f4839b0cb72fc633545a83b3f73dd3385a24a176860c461773a70"
+export PACKAGE_VERSION="3.118"
+export PACKAGE_URL="https://ftp.mozilla.org/pub/security/nss/releases/NSS_3_118_RTM/src/nss-3.118-with-nspr-4.37.tar.gz"
+export PACKAGE_SHA256="14253b498babbcddc36e65df531292f69f7359bc975ca082a5801ee4147a7acc"
 
 # Runtime dependencies (none - NSPR built together with NSS via build.sh)
 export DEPENDENCIES=()
