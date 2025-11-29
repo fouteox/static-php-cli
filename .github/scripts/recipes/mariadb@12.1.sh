@@ -7,7 +7,7 @@ set -e
 
 # Metadata
 export PACKAGE_NAME="mariadb@12.0"
-export PACKAGE_VERSION="12.0.2"
+export PACKAGE_VERSION="12.1.2"
 export PACKAGE_URL="https://archive.mariadb.org/mariadb-12.1.2/source/mariadb-12.1.2.tar.gz"
 export PACKAGE_SHA256="6eb4f9aa99ee40e86a7753918e40d1745bfa90c5f91984d22fcedb2e9b570088"
 
