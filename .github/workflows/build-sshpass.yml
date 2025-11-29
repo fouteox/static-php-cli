@@ -82,6 +82,40 @@ jobs:
 
           echo "✓ Created ${ARCHIVE_NAME}"
 
+      - name: "Import signing certificate"
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          echo "$BUILD_CERTIFICATE_BASE64" | base64 --decode > $RUNNER_TEMP/certificate.p12
+          security import $RUNNER_TEMP/certificate.p12 -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          rm $RUNNER_TEMP/certificate.p12
+          echo "✓ Signing certificate imported"
+
+      - name: "Sign sshpass binary"
+        env:
+          SIGNING_IDENTITY: ${{ secrets.SIGNING_IDENTITY }}
+        run: |
+          VERSION="${{ env.SSHPASS_VERSION }}"
+          ARCHIVE_NAME="sshpass-${VERSION}-macos-arm64.tar.gz"
+
+          tar -xzf "$ARCHIVE_NAME"
+
+          codesign --force --sign "$SIGNING_IDENTITY" --timestamp --options runtime sshpass
+
+          rm "$ARCHIVE_NAME"
+          tar -czf "$ARCHIVE_NAME" sshpass
+          rm sshpass
+
+          echo "✓ sshpass signed"
+
       - name: "Upload archive to R2 with SHA-256 checksum"
         run: |
           VERSION="${{ env.SSHPASS_VERSION }}"
