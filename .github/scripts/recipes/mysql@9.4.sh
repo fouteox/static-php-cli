@@ -9,8 +9,8 @@ set -e
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/recipe-helpers.sh"
 
 # Metadata
-export PACKAGE_VERSION="9.4.0"
-export PACKAGE_SHA256="6bb509c54e58b54abbefa49e296e7220f5e7cfe446914ba3615f594967cfa921"
+export PACKAGE_VERSION="9.5.0"
+export PACKAGE_SHA256="ef3343981375865a2519f72b600e55f9c646e60e204a2964d3b7e8e748a110a5"
 
 # Derived automatically
 PACKAGE_NAME="$(get_package_name)"
@@ -20,10 +20,10 @@ export PACKAGE_NAME PACKAGE_URL
 # Runtime dependencies
 export DEPENDENCIES=(
     "abseil"
-    "icu4c@77"
+    "icu4c@78"
     "lz4"
     "openssl@3"
-    "protobuf@29"
+    "protobuf"
     "zlib"
     "zstd"
 )
