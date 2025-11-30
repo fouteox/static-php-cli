@@ -194,6 +194,27 @@ update_metadata() {
             }')
     done <<< "$checksums_input"
 
+    # Cleanup single-version services: remove old major versions
+    for service in $SINGLE_VERSION_SERVICES; do
+        is_single_version_service "$service" || continue
+
+        local current_major
+        current_major=$(get_supported_versions "$service" | tr ' ' '\n' | head -1)
+        [[ -z "$current_major" ]] && continue
+
+        # Get all major versions in metadata for this service
+        local old_majors
+        old_majors=$(echo "$metadata" | jq -r ".\"$service\" // {} | keys[]" 2>/dev/null)
+
+        # Remove all majors except the current one
+        for old_major in $old_majors; do
+            if [[ "$old_major" != "$current_major" ]]; then
+                log_info "Cleanup: removing $service.$old_major (keeping only $current_major)"
+                metadata=$(echo "$metadata" | jq "del(.\"$service\".\"$old_major\")")
+            fi
+        done
+    done
+
     # Save updated metadata
     echo "$metadata" | jq '.' > "$METADATA_FILE"
     log_info "Metadata updated: $METADATA_FILE"

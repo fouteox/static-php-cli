@@ -206,6 +206,8 @@ jobs:
 
       - name: "Cleanup old builds"
         run: |
+          source .github/config/services-config.sh
+
           # Extract service-major pairs from metadata (only successful builds are in metadata)
           jq -r 'to_entries[] | .key as $service | .value | to_entries[] | "\($service),\(.key)"' metadata-services.json | sort -u | while IFS=',' read -r service major; do
             # Get the current filename from metadata
@@ -215,10 +217,18 @@ jobs:
               continue
             fi
 
-            # List all files for this service-major and delete all except the current one
+            # Single-version services: delete ALL versions (prefix="${service}-")
+            # Multi-version services: delete only same major (prefix="${service}-${major}.")
+            if is_single_version_service "$service" 2>/dev/null; then
+              PREFIX="${service}-"
+            else
+              PREFIX="${service}-${major}."
+            fi
+
+            # List all files matching prefix and delete all except the current one
             aws s3api list-objects-v2 \
               --bucket ${{ secrets.R2_BUCKET_NAME }} \
-              --prefix "${service}-${major}." \
+              --prefix "$PREFIX" \
               --endpoint-url ${{ secrets.R2_ENDPOINT }} \
               --query 'Contents[].Key' \
               --output text 2>/dev/null | tr '\t' '\n' | while read -r file_key; do

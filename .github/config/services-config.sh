@@ -8,6 +8,17 @@
 # Liste des services disponibles
 AVAILABLE_SERVICES="mariadb mysql postgresql redis valkey"
 
+# Services qui ne conservent qu'UNE seule version majeure à la fois
+# Quand une nouvelle version majeure est buildée, les anciennes sont supprimées
+SINGLE_VERSION_SERVICES="valkey"
+
+# Vérifier si un service est single-version
+is_single_version_service() {
+    local service="$1"
+    [[ -z "$service" ]] && return 1
+    [[ " $SINGLE_VERSION_SERVICES " =~ \ $service\  ]]
+}
+
 # Fonction utilitaire : obtenir les versions supportées pour un service
 get_supported_versions() {
     local service="$1"
