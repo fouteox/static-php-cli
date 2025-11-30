@@ -9,8 +9,8 @@ set -e
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/recipe-helpers.sh"
 
 # Metadata
-export PACKAGE_VERSION="10.11.14"
-export PACKAGE_SHA256="8a571cb14fb1d4e3663d8e98f3d4200c042fc8b2a4aaaab495860dea8b7d052f"
+export PACKAGE_VERSION="10.11.15"
+export PACKAGE_SHA256="5311e85765402bde5a81a9a7b2643a7378d20316a2822bfad4b6ddcf104759a5"
 
 # Derived automatically
 PACKAGE_NAME="$(get_package_name)"
