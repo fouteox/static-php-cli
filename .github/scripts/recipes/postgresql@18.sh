@@ -9,8 +9,8 @@ set -e
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/recipe-helpers.sh"
 
 # Metadata
-export PACKAGE_VERSION="18.0"
-export PACKAGE_SHA256="0d5b903b1e5fe361bca7aa9507519933773eb34266b1357c4e7780fdee6d6078"
+export PACKAGE_VERSION="18.1"
+export PACKAGE_SHA256="ff86675c336c46e98ac991ebb306d1b67621ece1d06787beaade312c2c915d54"
 
 # Derived automatically
 PACKAGE_NAME="$(get_package_name)"
@@ -19,7 +19,7 @@ export PACKAGE_NAME PACKAGE_URL
 
 # Runtime dependencies
 export DEPENDENCIES=(
-    "icu4c@77"
+    "icu4c@78"
     "krb5"
     "lz4"
     "openssl@3"
