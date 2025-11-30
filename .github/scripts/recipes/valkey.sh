@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build recipe for Valkey 8.x
+# Build recipe for Valkey
 # Translated from: homebrew-core/Formula/v/valkey.rb
 # Description: High-performance data structure server that primarily serves key/value workloads
 
@@ -9,8 +9,8 @@ set -e
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/recipe-helpers.sh"
 
 # Metadata
-export PACKAGE_VERSION="8.1.4"
-export PACKAGE_SHA256="32350b017fee5e1a85f7e2d8580d581a0825ceae5cb3395075012c0970694dee"
+export PACKAGE_VERSION="9.0.0"
+export PACKAGE_SHA256="088f47e167eb640ea31af48c81c5d62ee56321f25a4b05d4e54a0ef34232724b"
 
 # Derived automatically
 PACKAGE_NAME="$(get_package_name)"

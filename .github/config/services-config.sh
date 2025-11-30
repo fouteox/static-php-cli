@@ -30,7 +30,7 @@ get_supported_versions() {
             echo "8"
             ;;
         "valkey")
-            echo "8"
+            echo "9"
             ;;
         *)
             echo ""
