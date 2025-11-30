@@ -42,6 +42,7 @@ build() {
     make -j"$(sysctl -n hw.ncpu)" \
         PREFIX="${PREFIX}" \
         CC="${CC:-cc}" \
+        LD="${CC:-cc}" \
         BUILD_TLS=yes
 
     # Install directly to final location
