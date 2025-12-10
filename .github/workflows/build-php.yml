@@ -22,7 +22,7 @@ jobs:
       AWS_DEFAULT_REGION: us-east-1
     steps:
       - name: "Checkout"
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: "Sync PHP versions"
         id: sync
@@ -55,7 +55,7 @@ jobs:
       matrix: ${{ fromJSON(needs.check-and-sync.outputs.build-matrix) }}
     steps:
       - name: "Checkout"
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: "Setup PHP"
         uses: shivammathur/setup-php@v2
@@ -128,7 +128,7 @@ jobs:
           echo "Checksum saved: ${{ matrix.full-version }},$CHECKSUM_SHA256,$ARCHIVE_NAME"
 
       - name: "Upload checksum info"
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: checksum-${{ matrix.full-version }}
           path: checksum-${{ matrix.full-version }}.txt
@@ -145,10 +145,10 @@ jobs:
       AWS_DEFAULT_REGION: us-east-1
     steps:
       - name: "Checkout"
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: "Download checksums"
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           pattern: checksum-*
           merge-multiple: true
