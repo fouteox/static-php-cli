@@ -75,12 +75,12 @@ jobs:
 
       - name: "Download sources"
         run: |
-          EXTENSIONS="bcmath,bz2,calendar,ctype,curl,dba,dom,exif,ffi,fileinfo,filter,ftp,gd,gmp,iconv,igbinary,imagick,imap,intl,ldap,lz4,mbregex,mbstring,mongodb,mysqli,mysqlnd,opcache,openssl,pcntl,pdo,pdo_mysql,pdo_pgsql,pdo_sqlite,pdo_sqlsrv,pgsql,phar,posix,readline,redis,session,shmop,simplexml,soap,sockets,sodium,sqlite3,sqlsrv,sysvmsg,sysvsem,sysvshm,tokenizer,xml,xmlreader,xmlwriter,xsl,zip,zlib"
+          EXTENSIONS="bcmath,bz2,calendar,ctype,curl,dba,dom,exif,ffi,fileinfo,filter,ftp,gd,gmp,iconv,igbinary,imagick,imap,intl,ldap,lz4,mbregex,mbstring,mongodb,mysqli,mysqlnd,opcache,openssl,pcntl,pdo,pdo_mysql,pdo_pgsql,pdo_sqlite,pdo_sqlsrv,pgsql,phar,posix,readline,redis,session,shmop,simplexml,soap,sockets,sodium,sqlite3,sqlsrv,sysvmsg,sysvsem,sysvshm,tokenizer,xml,xmlreader,xmlwriter,xsl,zip,zlib,xdebug"
 
           # Disable extensions not yet compatible with PHP 8.5
           if [[ "${{ matrix.php-version }}" == "8.5" ]]; then
-            echo "PHP 8.5 detected: disabling igbinary, imagick, pdo_sqlsrv, sqlsrv"
-            EXTENSIONS=$(echo "$EXTENSIONS" | sed 's/,igbinary,/,/g; s/,imagick,/,/g; s/,pdo_sqlsrv,/,/g; s/,sqlsrv,/,/g')
+            echo "PHP 8.5 detected: disabling pdo_sqlsrv, sqlsrv"
+            EXTENSIONS=$(echo "$EXTENSIONS" | sed 's/,pdo_sqlsrv,/,/g; s/,sqlsrv,/,/g')
           fi
 
           DOWN_CMD="curl -fsSL -o spc https://dl.static-php.dev/static-php-cli/spc-bin/nightly/spc-macos-aarch64 && chmod +x spc && ./spc doctor --auto-fix && ./spc download"
@@ -93,7 +93,7 @@ jobs:
       - name: "Build PHP"
         run: |
           export SPC_PHP_VERSION_SHORT=$(echo ${{ matrix.php-version }} | sed 's/\.//g' | cut -c1-2)
-          ./spc build $EXTENSIONS --build-cli --build-fpm -P .github/scripts/patch_fadogen_ini_scan.php
+          ./spc build $EXTENSIONS --build-cli --build-fpm --build-shared=xdebug -P .github/scripts/patch_fadogen_ini_scan.php
 
       - name: "Create and Upload PHP archive to R2 with SHA-256"
         run: |

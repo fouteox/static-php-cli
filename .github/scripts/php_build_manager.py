@@ -115,12 +115,19 @@ def check_versions():
 
 
 def create_archive(php_version):
-    """Create tar.gz archive containing both CLI and FPM binaries."""
+    """Create tar.gz archive containing CLI, FPM binaries and shared extensions."""
     archive_name = get_archive_filename(php_version)
 
     with tarfile.open(archive_name, 'w:gz') as tar:
         tar.add('buildroot/bin/php', arcname='php-cli')
         tar.add('buildroot/bin/php-fpm', arcname='php-fpm')
+
+        # Include shared extensions (.so files) if they exist
+        buildroot = Path('buildroot')
+        for so_file in buildroot.rglob('*.so'):
+            arcname = f'extensions/{so_file.name}'
+            tar.add(str(so_file), arcname=arcname)
+            print(f"Included {so_file.name} in archive")
 
     with open('archive_info.txt', 'w') as f:
         f.write(f'ARCHIVE_NAME={archive_name}\n')
