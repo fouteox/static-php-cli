@@ -16,6 +16,7 @@ jobs:
       build-matrix: ${{ steps.sync.outputs.matrix }}
       eol-versions: ${{ steps.sync.outputs.eol }}
       should-build: ${{ steps.sync.outputs.should-build }}
+      supported-versions: ${{ steps.sync.outputs.supported-versions }}
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -166,9 +167,12 @@ jobs:
 
           ALL_CHECKSUMS=$(cat checksum-*.txt 2>/dev/null | grep -v "^$")
 
+          SUPPORTED_VERSIONS='${{ needs.check-and-sync.outputs.supported-versions }}'
+
           python3 .github/scripts/php_build_manager.py update-metadata \
             --build-matrix "$BUILD_MATRIX" \
-            --archive-checksums "$ALL_CHECKSUMS"
+            --archive-checksums "$ALL_CHECKSUMS" \
+            --supported-versions "$SUPPORTED_VERSIONS"
 
           aws s3 cp metadata-php.json s3://${{ secrets.R2_BUCKET_NAME }}/metadata-php.json --endpoint-url ${{ secrets.R2_ENDPOINT }}
           echo "Uploaded metadata-php.json to R2"

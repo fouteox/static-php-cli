@@ -112,6 +112,7 @@ def check_versions():
         f.write(f'matrix={matrix_json}\n')
         f.write(f'eol={eol_json}\n')
         f.write(f'should-build={should_build}\n')
+        f.write(f'supported-versions={json.dumps(supported_versions)}\n')
 
 
 def create_archive(php_version):
@@ -135,10 +136,11 @@ def create_archive(php_version):
     print(f"Created {archive_name}")
 
 
-def update_metadata(build_matrix_json, archive_checksums):
+def update_metadata(build_matrix_json, archive_checksums, supported_versions_json):
     """Update metadata-php.json with build results."""
     metadata = load_json(METADATA_FILE) if Path(METADATA_FILE).exists() else {}
     build_matrix = json.loads(build_matrix_json)
+    supported_versions = json.loads(supported_versions_json)
 
     checksums_map = {}
     for line in archive_checksums.strip().split('\n'):
@@ -167,10 +169,15 @@ def update_metadata(build_matrix_json, archive_checksums):
             'latest': full_version,
             'releaseDate': release_date,
             'filename': checksum_data['filename'],
-            'sha256': checksum_data['sha256']
+            'sha256': checksum_data['sha256'],
+            'isEol': major_minor not in supported_versions
         }
 
         print(f"Updated {major_minor} -> {full_version}")
+
+    # Update isEol for all existing versions
+    for version_key in metadata:
+        metadata[version_key]['isEol'] = version_key not in supported_versions
 
     save_json(metadata, METADATA_FILE)
     print(f"Updated metadata for {len(metadata)} PHP versions")
@@ -204,6 +211,7 @@ def main():
     metadata_parser = subparsers.add_parser('update-metadata', help='Update metadata-php.json with build results')
     metadata_parser.add_argument('--build-matrix', required=True, help='JSON build matrix')
     metadata_parser.add_argument('--archive-checksums', required=True, help='Archive checksums (version,sha256,filename format)')
+    metadata_parser.add_argument('--supported-versions', required=True, help='JSON array of supported PHP versions')
 
     cleanup_parser = subparsers.add_parser('cleanup-eol', help='Remove EOL versions from metadata')
     cleanup_parser.add_argument('--eol-versions', required=True, help='JSON array of EOL versions')
@@ -215,7 +223,7 @@ def main():
     elif args.command == 'create-archive':
         create_archive(args.php_version)
     elif args.command == 'update-metadata':
-        update_metadata(args.build_matrix, args.archive_checksums)
+        update_metadata(args.build_matrix, args.archive_checksums, args.supported_versions)
     elif args.command == 'cleanup-eol':
         cleanup_eol(args.eol_versions)
     else:
