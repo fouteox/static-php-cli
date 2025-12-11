@@ -49,9 +49,14 @@ def check_versions():
     build_matrix = []
     eol_versions = []
 
+    # Only build these specific PHP versions
+    allowed_versions = ['8.3', '8.4', '8.5']
+
     supported_versions = []
     if "8" in api_data:
-        supported_versions = api_data["8"].get("supported_versions", [])
+        all_supported = api_data["8"].get("supported_versions", [])
+        supported_versions = [v for v in all_supported if v in allowed_versions]
+        print(f"Filtered supported versions: {supported_versions} (from {all_supported})")
 
     version_details_cache = {}
     print("Fetching version details for all supported versions...")
