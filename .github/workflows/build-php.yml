@@ -98,6 +98,52 @@ jobs:
           export SPC_PHP_VERSION_SHORT=$(echo ${{ matrix.php-version }} | sed 's/\.//g' | cut -c1-2)
           ./spc build $EXTENSIONS --build-cli --build-fpm --build-shared=xdebug -P .github/scripts/patch_fadogen_ini_scan.php
 
+      - name: "Import signing certificate"
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          echo "$BUILD_CERTIFICATE_BASE64" | base64 --decode > $RUNNER_TEMP/certificate.p12
+          security import $RUNNER_TEMP/certificate.p12 -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          rm $RUNNER_TEMP/certificate.p12
+          echo "✓ Signing certificate imported"
+
+      - name: "Sign PHP binaries"
+        env:
+          SIGNING_IDENTITY: ${{ secrets.SIGNING_IDENTITY }}
+        run: |
+          ENTITLEMENTS=".github/scripts/entitlements-php.plist"
+
+          echo "==> Signing PHP CLI..."
+          codesign --force --sign "$SIGNING_IDENTITY" --timestamp --options runtime \
+            --entitlements "$ENTITLEMENTS" \
+            buildroot/bin/php
+
+          echo "==> Signing PHP-FPM..."
+          codesign --force --sign "$SIGNING_IDENTITY" --timestamp --options runtime \
+            --entitlements "$ENTITLEMENTS" \
+            buildroot/bin/php-fpm
+
+          # Sign extensions .so (without entitlements)
+          echo "==> Signing extensions..."
+          find buildroot -name "*.so" -type f | while read -r so_file; do
+            echo "    Signing: $(basename "$so_file")"
+            codesign --force --sign "$SIGNING_IDENTITY" --timestamp --options runtime "$so_file"
+          done
+
+          echo "==> Verifying signatures..."
+          codesign --verify --strict buildroot/bin/php
+          codesign --verify --strict buildroot/bin/php-fpm
+
+          echo "✓ All PHP binaries signed and verified"
+
       - name: "Create and Upload PHP archive to R2 with SHA-256"
         run: |
           python3 .github/scripts/php_build_manager.py create-archive \
